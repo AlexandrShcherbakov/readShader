@@ -18,7 +18,7 @@ def _uncombine_var_and_comp(tokens):
             continue
         tokens[i] = _Token(spl[0], spl[1])
         tokens[i] = spl[0] + "." + spl[1]
-        if len(res_token_comp) == 1:
+        if len(res_token_comp) == 1 and len(spl[1]) == 1:
             continue
         comp = ""
         comps = {"x": 0, "y": 1, "z": 2, "w": 3}
@@ -39,13 +39,24 @@ def _process_const(tokens):
             tokens[i] = "float" + str(components) + tokens[i][1:]
 
 
+class LdFormatter:
+    def __init__(self, reg_comp_count):
+        self.reg_comp_count = reg_comp_count
+
+    def format(self, *args):
+        buffer_var, buffer_comp = args[-1].split('.')
+        reg_var, reg_comp = args[0].split('.')
+        reg_comp = reg_comp[:self.reg_comp_count]
+        offset = args[1] if len(args) > 2 else "0"
+        return f"{buffer_var}[{reg_var}.{reg_comp} + {offset}].{buffer_comp}"
+
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
         "utof": "asfloat({})",
         "mad": "{} * {} + {}",
         "ftou": "asuint({})",
         "mov": "{}",
-        "ld_indexable(texture2darray)(float,float,float,float)": "{1}[{0}]",
+        "ld_indexable(texture2darray)(float,float,float,float)": LdFormatter(3),
         "ftoi": "asint({})",
         "ine": "{} != {}",
         "mul": "{} * {}",
@@ -53,7 +64,7 @@ def replace_dxil_tokens_with_hlsl(dxil):
         "movc": "{} ? {} : {}",
         "div": "{} / {}",
         "frc": "frac({})",
-        "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)": "{2}[{0} + {1}]",
+        "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)": LdFormatter(1),
         "and": "{} & {}",
         "add": "{} + {}",
         "dp3": "dot({}, {})",

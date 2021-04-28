@@ -28,6 +28,17 @@ def _uncombine_var_and_comp(tokens):
         tokens[i] = spl[0] + "." + comp
 
 
+def _process_const(tokens):
+    for i in range(len(tokens)):
+        if not tokens[i].startswith("l("):
+            continue
+        components = tokens[i].count(",") + 1
+        if components == 1:
+            tokens[i] = tokens[i][2:-1]
+        else:
+            tokens[i] = "float" + str(components) + tokens[i][1:]
+
+
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
         "utof": "asfloat({})",
@@ -77,6 +88,7 @@ def replace_dxil_tokens_with_hlsl(dxil):
         command = line.split(":")[1]
         tokens = list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), command.split(' '))))
         _squash_brackets_expression(tokens)
+        _process_const(tokens)
         loc_tabs = tabs
         if tokens[0] in local_tab_modifiers:
             loc_tabs += local_tab_modifiers[tokens[0]]

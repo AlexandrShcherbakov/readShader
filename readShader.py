@@ -1,3 +1,5 @@
+import collections
+
 def _squash_brackets_expression(tokens):
     i = len(tokens) - 1
     while i >= 0:
@@ -5,6 +7,26 @@ def _squash_brackets_expression(tokens):
             tokens[i] += ',' + tokens[i + 1]
             del tokens[i + 1]
         i -= 1
+
+_Token = collections.namedtuple("Token", ["var", "comp"])
+
+def _uncombine_var_and_comp(tokens):
+    res_token_comp = tokens[1].split('.')[1]
+    for i in range(2, len(tokens)):
+        spl = tokens[i].split('.')
+        if len(spl) != 2:
+            continue
+        tokens[i] = _Token(spl[0], spl[1])
+        tokens[i] = spl[0] + "." + spl[1]
+        if len(res_token_comp) == 1:
+            continue
+        comp = ""
+        comps = {"x": 0, "y": 1, "z": 2, "w": 3}
+        for c in res_token_comp:
+            comp += spl[1][comps[c]]
+        tokens[i] = _Token(spl[0], comp)
+        tokens[i] = spl[0] + "." + comp
+
 
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
@@ -59,6 +81,7 @@ def replace_dxil_tokens_with_hlsl(dxil):
         if tokens[0] in local_tab_modifiers:
             loc_tabs += local_tab_modifiers[tokens[0]]
         if tokens[0] in replace_table_operations:
+            _uncombine_var_and_comp(tokens)
             hlsl += "  " * loc_tabs + tokens[1] + " = " + replace_table_operations[tokens[0]].format(*tokens[2:]) + ";\n"
         elif tokens[0] in replace_table_operators:
             hlsl += "  " * loc_tabs + replace_table_operators[tokens[0]].format(*tokens[1:]) + "\n"

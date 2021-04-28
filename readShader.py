@@ -12,6 +12,8 @@ _Token = collections.namedtuple("Token", ["var", "comp"])
 
 def _uncombine_var_and_comp(tokens):
     res_token_comp = tokens[1].split('.')[1]
+    if tokens[0].startswith("dp"):
+        res_token_comp = "xyzw"[:int(tokens[0][2])]
     for i in range(2, len(tokens)):
         spl = tokens[i].split('.')
         if len(spl) != 2:

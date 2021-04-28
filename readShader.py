@@ -1,3 +1,11 @@
+def _squash_brackets_expression(tokens):
+    i = len(tokens) - 1
+    while i >= 0:
+        while "(" in tokens[i] and ")" not in tokens[i]:
+            tokens[i] += ',' + tokens[i + 1]
+            del tokens[i + 1]
+        i -= 1
+
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
         "utof": "asfloat({})",
@@ -46,9 +54,7 @@ def replace_dxil_tokens_with_hlsl(dxil):
             continue
         command = line.split(":")[1]
         tokens = list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), command.split(' '))))
-        if tokens[0].startswith("ld_structured_indexable"):
-            tokens[0] += "," + tokens[1]
-            del tokens[1]
+        _squash_brackets_expression(tokens)
         loc_tabs = tabs
         if tokens[0] in local_tab_modifiers:
             loc_tabs += local_tab_modifiers[tokens[0]]

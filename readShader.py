@@ -23,7 +23,7 @@ def _uncombine_var_and_comp(tokens):
     if tokens[0].startswith("dp"):
         res_token_comp = "xyzw"[:int(tokens[0][2])]
     for i in range(1, len(tokens)):
-        spl = tokens[i].split('.')
+        spl = tokens[i].rsplit('.', 1)
         if len(spl) != 2:
             continue
         tokens[i] = _Token(spl[0], spl[1])
@@ -44,7 +44,24 @@ def _process_const(tokens):
         if components == 1:
             tokens[i] = tokens[i][2:-1]
         else:
-            tokens[i] = "float" + str(components) + tokens[i][1:]
+            tokens[i] = "float" + str(components) + tokens[i][1:] + ".xyzw"[:components + 1]
+
+class _Variable:
+    def __init__(self, name, reg, comp):
+        self.name = name
+        self.reg = reg
+        self.comp = comp
+
+    def __str__(self):
+        return self.name
+
+def _token_to_single_regs(token):
+    return [_Token(token.var, i) for i in token.comp]
+
+def _replace_reg_with_var(reg, variables_map):
+    for variable in variables_map.values():
+        if reg.var == variable.reg and reg.comp in variable.comp:
+            return _Token(variable.name, "xyzw"[variable.comp.index(reg.comp)])
 
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
@@ -100,6 +117,21 @@ def replace_dxil_tokens_with_hlsl(dxil):
         if tokens[0] in replace_table_operations or tokens[0] in replace_table_special:
             _uncombine_var_and_comp(tokens)
         tokens_lines.append(tokens)
+
+    # variables_map = dict()
+    # variable_idx = 0
+    # for tokens in tokens_lines:
+    #     if tokens[0] in replace_table_operations:
+    #         for i in range(2, len(tokens)):
+    #             if isinstance(tokens[i], _Token) and tokens[i].var.startswith('r'):
+    #                 vars = [_replace_reg_with_var(reg, variables_map) for reg in _token_to_single_regs(tokens[i])]
+    #                 print(*vars)
+    #             if str(tokens[i]) in variables_map.keys():
+    #                 tokens[i] = variables_map[str(tokens[i])]
+    #         variable_name = f"v_{variable_idx}"
+    #         variable_idx += 1
+    #         variables_map[str(tokens[1])] = _Variable(variable_name, tokens[1].var, tokens[1].comp)
+    #         tokens[1] = _Variable(variable_name, tokens[1].var, tokens[1].comp)
 
     for tokens in tokens_lines:
         loc_tabs = tabs

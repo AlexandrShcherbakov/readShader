@@ -120,7 +120,7 @@ def _single_vars_to_vec(vars):
         return vars[0]
     tp = _default_type_extr(vars)
     name = f"{type_names[tp]}{len(vars)}({', '.join(list(map(str, vars)))})"
-    return _Token(name, "xyzw"[:len(vars) + 1], tp)
+    return _Token(name, "xyzw"[:len(vars)], tp)
 
 def _find_var_in_scopes(scopes, reg):
     for i in range(len(scopes) - 1, -1, -1):

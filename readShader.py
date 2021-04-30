@@ -22,6 +22,9 @@ def _uncombine_var_and_comp(tokens):
     res_token_comp = tokens[1].split('.')[1]
     if tokens[0].startswith("dp"):
         res_token_comp = "xyzw"[:int(tokens[0][2])]
+    res_token_comp = [res_token_comp for _ in range(len(tokens))]
+    if "ld_indexable(texture2darray)" in tokens[0]:
+        res_token_comp[2] = "xyz"
     for i in range(1, len(tokens)):
         spl = tokens[i].rsplit('.', 1)
         if len(spl) != 2:
@@ -31,7 +34,7 @@ def _uncombine_var_and_comp(tokens):
             continue
         comp = ""
         comps = {"x": 0, "y": 1, "z": 2, "w": 3}
-        for c in res_token_comp:
+        for c in res_token_comp[i]:
             comp += spl[1][comps[c]]
         tokens[i] = _Token(spl[0], comp)
 

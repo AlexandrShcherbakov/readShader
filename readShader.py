@@ -126,7 +126,7 @@ def _find_var_in_scopes(scopes, reg):
     for i in range(len(scopes) - 1, -1, -1):
         if reg in scopes[i]:
             return scopes[i][reg]
-    raise Exception("Unknown variable")
+    return _Variable("0", reg.var, reg.comp, _UNKNOWN)
 
 def replace_dxil_tokens_with_hlsl(dxil):
     replace_table_operations = {
@@ -186,7 +186,7 @@ def replace_dxil_tokens_with_hlsl(dxil):
         tokens = list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), command.split(' '))))
         _squash_brackets_expression(tokens)
         _process_const(tokens)
-        if tokens[0] in replace_table_operations or tokens[0] in replace_table_special:
+        if len(tokens) > 1:
             _uncombine_var_and_comp(tokens)
         tokens_lines.append(tokens)
 
@@ -206,6 +206,13 @@ def replace_dxil_tokens_with_hlsl(dxil):
             var = _Variable(variable_name, tokens[1].var, tokens[1].comp, type_by_instr[tokens[0]](tokens[2:]))
             variables_map[-1].update(var.gen_reg_to_vars_pairs())
             tokens[1] = var
+        else:
+            for i in range(1, len(tokens)):
+                if not _is_reg(tokens[i]):
+                    continue
+                single_regs = _token_to_single_regs(tokens[i])
+                single_vars = [_find_var_in_scopes(variables_map, reg) for reg in single_regs]
+                tokens[i] = _single_vars_to_vec(single_vars)
         if tokens[0].startswith("if"):
             variables_map.append(dict())
         elif tokens[0] == "else":

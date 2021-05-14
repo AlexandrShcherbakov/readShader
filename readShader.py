@@ -112,11 +112,17 @@ class _VariableAccessor:
                 return
         self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
 
+    def whole_value(self):
+        return "xyzw".startswith(self.components) and len(self.components) == len(self.variable.components)
+
     def __str__(self):
         comps = f".{self.components}"
-        if "xyzw".startswith(self.components) and len(self.components) == len(self.variable.components):
+        if self.whole_value():
             comps = ""
         return f"{'-' if self.negative else ''}{self.variable}{comps}"
+
+    def __eq__(self, a):
+        return self.variable == a. variable and self.components == a.components and self.negative == a.negative
 
 
 class _CombinedValue:
@@ -207,6 +213,7 @@ def _tune_operands(res, command, operands):
 
 class _ResStatement:
     def __init__(self, command, res, operands, context, initialize=True):
+        self.init_command = command
         self.command = replace_table_operations[command]
         # Parse operands
         self.operands = _parse_operands(operands, context)
@@ -220,8 +227,15 @@ class _ResStatement:
 
     def __str__(self):
         prefix = self.res.get_type() + " " if self.initialize else ""
-        return f"{'  ' * self.tabs}{prefix}{self.res} = {self.command.format(*self.operands)}"
+        return f"{'  ' * self.tabs}{prefix}{self.res} = {self.command.format(*self.operands)};"
 
+
+class _TmpResStatement:
+    def __init__(self, init_statement):
+        self.statement = init_statement
+    
+    def __str__(self):
+        return f"({self.statement.command.format(*self.statement.operands)})"
 
 class _Statement:
     def __init__(self, command, operands, context):
@@ -245,7 +259,7 @@ class _StoreStatement:
         _tune_operands(self.operands[0], command, [self.operands[-1]])
 
     def __str__(self):
-        return '  ' * self.tabs + self.command.format(*self.operands)
+        return '  ' * self.tabs + self.command.format(*self.operands) + ";"
 
 
 class _Initializer:
@@ -253,7 +267,7 @@ class _Initializer:
         self.variable = variable
 
     def __str__(self):
-        return f"{self.variable.get_type()} {self.variable.name}"
+        return f"{self.variable.get_type()} {self.variable.name};"
 
 class _ShaderInput:
     def __init__(self, name, tp, negative):
@@ -290,6 +304,8 @@ class _Constant:
 
     def __str__(self):
         if len(self.values) == 1:
+            if isinstance(self.values[0], int):
+                return hex(self.values[0])
             return str(self.values[0])
         return f"{type_names[self.type]}{len(self.values)}({', '.join(list(map(str, self.values)))})"
 
@@ -422,6 +438,44 @@ def process_inputs(inputs):
     return res
 
 
+def replace_known_patterns(lines, var_usages):
+    to_erase = []
+    for i in range(len(lines) - 1):
+        if (
+            isinstance(lines[i], _ResStatement) and lines[i].init_command.startswith("dp") and lines[i].operands[0] == lines[i].operands[1]
+            and var_usages[lines[i].res.name] == 1
+            and isinstance(lines[i + 1], _ResStatement) and lines[i + 1].init_command == "sqrt" and isinstance(lines[i + 1].operands[0], _VariableAccessor)
+            and lines[i + 1].operands[0].whole_value()
+            and lines[i].res == lines[i + 1].operands[0].variable
+        ):
+            lines[i].command = "length({})"
+            lines[i].operands = lines[i].operands[:1]
+            lines[i].res = lines[i + 1].res
+            to_erase.append(i + 1)
+    
+    for i in reversed(to_erase):
+        lines = lines[:i] + lines[i + 1:]
+    return lines
+
+
+def reduce_lines_count(lines, var_usages):
+    to_erase = []
+    for i in range(len(lines) - 1):
+        if not isinstance(lines[i], (_ResStatement, _StoreStatement, _Statement)):
+            continue
+        for k in range(len(lines[i].operands)):
+            if isinstance(lines[i].operands[k], _VariableAccessor) and var_usages[lines[i].operands[k].variable.name] == 1:
+                for j in range(i):
+                    if isinstance(lines[j], _ResStatement) and lines[j].res == lines[i].operands[k].variable:
+                        lines[i].operands[k] = _TmpResStatement(lines[j])
+                        to_erase.append(j)
+                        break
+    
+    for i in reversed(to_erase):
+        lines = lines[:i] + lines[i + 1:]
+    return lines
+
+
 def dxil_to_commands(input_lines, dxil_lines, external_inputs):
     processed = []
     context = _Context(external_inputs, process_inputs(input_lines))
@@ -443,4 +497,21 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs):
             if isinstance(p, _ResStatement) and p.res.name in names:
                 p.initialize = False
                 p.res = variables[0]
+    
+    variable_usages = collections.defaultdict(lambda:0)
+    for st in processed:
+        if not isinstance(st, (_ResStatement, _Statement, _StoreStatement)):
+            continue
+        for operand in st.operands:
+            if isinstance(operand, _VariableAccessor):
+                variable_usages[operand.variable.name] += 1
+            elif isinstance(operand, _CombinedValue):
+                for v in operand.values:
+                    variable_usages[v[0]] += 1
+        if isinstance(st, _ResStatement) and not st.initialize:
+            variable_usages[st.res.name] += 1
+
+    processed = replace_known_patterns(processed, variable_usages)
+    processed = reduce_lines_count(processed, variable_usages)
+
     return "\n".join(list(map(str, processed)))

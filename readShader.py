@@ -411,7 +411,7 @@ def _parse_operands(operands, context):
     return parsed
 
 
-def dxil_transform(dxil, inputs):
+def dxil_transform(dxil, inputs, var_names):
     dxil_lines = []
     input_lines = []
     for line in dxil.split('\n'):
@@ -421,7 +421,7 @@ def dxil_transform(dxil, inputs):
             continue
         command = line.split(":")[1]
         dxil_lines.append(list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), command.split(' ')))))
-    return dxil_to_commands(input_lines, dxil_lines, inputs)
+    return dxil_to_commands(input_lines, dxil_lines, inputs, var_names)
 
 def process_inputs(inputs):
     res = dict()
@@ -476,7 +476,7 @@ def reduce_lines_count(lines, var_usages):
     return lines
 
 
-def dxil_to_commands(input_lines, dxil_lines, external_inputs):
+def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
     processed = []
     context = _Context(external_inputs, process_inputs(input_lines))
     for command in dxil_lines:
@@ -513,5 +513,11 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs):
 
     processed = replace_known_patterns(processed, variable_usages)
     processed = reduce_lines_count(processed, variable_usages)
+
+    for i in range(len(processed)):
+        if not isinstance(processed[i], _ResStatement):
+            continue
+        if processed[i].res.name in var_names:
+            processed[i].res.name = var_names[processed[i].res.name]
 
     return "\n".join(list(map(str, processed)))

@@ -18,24 +18,24 @@ def _squash_brackets_expression(tokens):
         i -= 1
 
 replace_table_operations = {
-    "utof": "asfloat({})",
-    "mad": "{} * {} + {}",
-    "ftou": "asuint({})",
-    "mov": "{}",
-    "ld_indexable(texture2darray)(float,float,float,float)": "{1.name}[{0}].{1.components}",
-    "ftoi": "asint({})",
-    "ine": "{} != {}",
-    "mul": "{} * {}",
-    "ge": "{} >= {}",
-    "movc": "{} ? {} : {}",
-    "div": "{} / {}",
-    "frc": "frac({})",
-    "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)": "{2.name}[{0} + {1}].{2.components}",
-    "and": "{} & {}",
-    "add": "{} + {}",
-    "dp3": "dot({}, {})",
-    "sqrt": "sqrt({})",
-    "min": "min({}, {})",
+    "utof": ("asfloat({})", True),
+    "mad": ("{} * {} + {}", False),
+    "ftou": ("asuint({})", True),
+    "mov": ("{}", True),
+    "ld_indexable(texture2darray)(float,float,float,float)": ("{1.name}[{0}].{1.components}", True),
+    "ftoi": ("asint({})", True),
+    "ine": ("{} != {}", False),
+    "mul": ("{} * {}", True),
+    "ge": ("{} >= {}", False),
+    "movc": ("{} ? {} : {}", False),
+    "div": ("{} / {}", True),
+    "frc": ("frac({})", True),
+    "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)": ("{2.name}[{0} + {1}].{2.components}", True),
+    "and": ("{} & {}", False),
+    "add": ("{} + {}", False),
+    "dp3": ("dot({}, {})", True),
+    "sqrt": ("sqrt({})", True),
+    "min": ("min({}, {})", True)
 }
 
 arg_sizes = {
@@ -214,7 +214,7 @@ def _tune_operands(res, command, operands):
 class _ResStatement:
     def __init__(self, command, res, operands, context, initialize=True):
         self.init_command = command
-        self.command = replace_table_operations[command]
+        self.command, self.inplace_without_brackets = replace_table_operations[command]
         # Parse operands
         self.operands = _parse_operands(operands, context)
         # Evaluate result variable
@@ -235,7 +235,10 @@ class _TmpResStatement:
         self.statement = init_statement
     
     def __str__(self):
-        return f"({self.statement.command.format(*self.statement.operands)})"
+        value = f"{self.statement.command.format(*self.statement.operands)}"
+        if self.statement.inplace_without_brackets:
+            return value
+        return f"({value})"
 
 class _Statement:
     def __init__(self, command, operands, context):

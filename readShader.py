@@ -23,6 +23,7 @@ def _squash_brackets_expression(tokens):
 
 replace_table_operations = {
     "utof": ("asfloat({})", True),
+    "itof": ("asfloat({})", True),
     "mad": ("{} * {} + {}", False),
     "ftou": ("asuint({})", True),
     "mov": ("{}", True),
@@ -31,6 +32,7 @@ replace_table_operations = {
     "ine": ("{} != {}", False),
     "ne": ("{} != {}", False),
     "eq": ("{} == {}", False),
+    "ieq": ("{} == {}", False),
     "lt": ("{} < {}", False),
     "mul": ("{} * {}", True),
     "ge": ("{} >= {}", False),
@@ -42,9 +44,12 @@ replace_table_operations = {
     "add": ("{} + {}", False),
     "dp3": ("dot({}, {})", True),
     "dp2": ("dot({}, {})", True),
+    "dp4": ("dot({}, {})", True),
     "sqrt": ("sqrt({})", True),
     "rsq": ("rsqrt({})", True),
-    "round_ni": ("round({})", True),
+    "round_ni": ("floor({})", True),
+    "round_z": ("trunc({})", True),
+    "exp": ("exp({})", True),
     "min": ("min({}, {})", True),
     "max": ("max({}, {})", True),
     "mul_sat": ("saturate({} * {})", True),
@@ -94,6 +99,7 @@ type_by_instr.update({
     "ine": lambda args: _BOOL,
     "ne": lambda args: _BOOL,
     "eq": lambda args: _BOOL,
+    "ieq": lambda args: _BOOL,
     "lt": lambda args: _BOOL,
 })
 
@@ -581,7 +587,7 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
             processed.append(_StoreStatement(command[0], command[1:], context))
         else:
             raise Exception(f"Unsupported command {command}")
-        print(processed[-1])
+        # print(processed[-1])
 
     for key, variables in context.replacer.items():
         names = {v.name for v in variables}

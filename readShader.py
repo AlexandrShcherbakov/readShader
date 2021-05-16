@@ -10,12 +10,16 @@ _BOOL = 1
 _UNKNOWN = 0
 
 def _squash_brackets_expression(tokens):
-    i = len(tokens) - 1
-    while i >= 0:
-        while "(" in tokens[i] and ")" not in tokens[i]:
-            tokens[i] += ',' + tokens[i + 1]
-            del tokens[i + 1]
-        i -= 1
+    def squash_brackets(tokens, begin, end, sep):
+        i = len(tokens) - 1
+        while i >= 0:
+            while begin in tokens[i] and end not in tokens[i]:
+                tokens[i] += sep + tokens[i + 1]
+                del tokens[i + 1]
+            i -= 1
+    
+    squash_brackets(tokens, "(", ")", ",")
+    squash_brackets(tokens, "[", "]", "")
 
 replace_table_operations = {
     "utof": ("asfloat({})", True),
@@ -25,6 +29,9 @@ replace_table_operations = {
     "ld_indexable(texture2darray)(float,float,float,float)": ("{1.name}[{0}].{1.components}", True),
     "ftoi": ("asint({})", True),
     "ine": ("{} != {}", False),
+    "ne": ("{} != {}", False),
+    "eq": ("{} == {}", False),
+    "lt": ("{} < {}", False),
     "mul": ("{} * {}", True),
     "ge": ("{} >= {}", False),
     "movc": ("{} ? {} : {}", False),
@@ -34,12 +41,21 @@ replace_table_operations = {
     "and": ("{} & {}", False),
     "add": ("{} + {}", False),
     "dp3": ("dot({}, {})", True),
+    "dp2": ("dot({}, {})", True),
     "sqrt": ("sqrt({})", True),
-    "min": ("min({}, {})", True)
+    "rsq": ("rsqrt({})", True),
+    "round_ni": ("round({})", True),
+    "min": ("min({}, {})", True),
+    "max": ("max({}, {})", True),
+    "mul_sat": ("saturate({} * {})", True),
+    "div_sat": ("saturate({} / {})", True),
+    "ld_indexable": ("{1.name}[{0}].{1.components}", True),
+    "ld_structured": ("{2.name}[{0} + {1}].{2.components}", True),
 }
 
 arg_sizes = {
-    "ld_indexable(texture2darray)(float,float,float,float)": 3
+    "ld_indexable(texture2darray)(float,float,float,float)": 3,
+    "ld_structured": 1,
 }
 
 replace_table_special = {
@@ -75,6 +91,9 @@ type_by_instr.update({
     "ld_indexable(texture2darray)(float,float,float,float)": lambda args: _FLOAT,
     "ge": lambda args: _BOOL,
     "ine": lambda args: _BOOL,
+    "ne": lambda args: _BOOL,
+    "eq": lambda args: _BOOL,
+    "lt": lambda args: _BOOL,
 })
 
 special_res_components = {
@@ -100,17 +119,20 @@ class _Variable:
 
 
 class _VariableAccessor:
-    def __init__(self, variable, components, negative):
+    def __init__(self, variable, components, wrappers):
         self.variable = variable
         self.components = components
         self.type = self.variable.type
-        self.negative = negative
+        self.wrappers = wrappers
     
     def tune_components(self, res, command):
         if len(res.components) == 1:
             if len(self.components) == 1:
                 return
-        self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+        if command in arg_sizes:
+            self.components = self.components[:arg_sizes[command]]
+        else:
+            self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
 
     def whole_value(self):
         return "xyzw".startswith(self.components) and len(self.components) == len(self.variable.components)
@@ -119,17 +141,17 @@ class _VariableAccessor:
         comps = f".{self.components}"
         if self.whole_value():
             comps = ""
-        return f"{'-' if self.negative else ''}{self.variable}{comps}"
+        return f"{self.wrappers[0]}{self.variable}{comps}{self.wrappers[1]}"
 
     def __eq__(self, a):
-        return self.variable == a. variable and self.components == a.components and self.negative == a.negative
+        return self.variable == a.variable and self.components == a.components and self.wrappers == a.wrappers
 
 
 class _CombinedValue:
-    def __init__(self, values, negative):
+    def __init__(self, values, wrappers):
         self.values = values
         self.type = max([val[2].type for val in values])
-        self.negative = negative
+        self.wrappers = wrappers
 
     def tune_components(self, res, command):
         if command in arg_sizes:
@@ -141,7 +163,7 @@ class _CombinedValue:
         vals = [
             (f'{var.name}.{var_comp}' if len(var.components) > 1 else var_name) for var_name, var_comp, var in self.values
         ]
-        return f"{'-' if self.negative else ''}{type_names[self.type]}{len(self.values)}({', '.join(vals)})"
+        return f"{self.wrappers[0]}{type_names[self.type]}{len(self.values)}({', '.join(vals)}){self.wrappers[1]}"
 
 
 class _Context:
@@ -162,7 +184,7 @@ class _Context:
         self.variables_map[self.stack[-1]].update({f"{reg_name}.{components[i]}": (variable_name, "xyzw"[i], var) for i in range(len(components))})
         return var
     
-    def get_variable_by_reg(self, reg, components, negative=False):
+    def get_variable_by_reg(self, reg, components, wrappers):
         in_other_scopes = []
         variables = []
         for comp in components:
@@ -186,8 +208,8 @@ class _Context:
             
 
         if len({var_name for var_name, var_comp, var in variables}) == 1:
-            return _VariableAccessor(variables[0][2], "".join([var_comp for var_name, var_comp, var in variables]), negative)
-        return _CombinedValue(variables, negative)
+            return _VariableAccessor(variables[0][2], "".join([var_comp for var_name, var_comp, var in variables]), wrappers)
+        return _CombinedValue(variables, wrappers)
 
     def enter_scope(self):
         self.stack.append(len(self.variables_map))
@@ -273,17 +295,17 @@ class _Initializer:
         return f"{self.variable.get_type()} {self.variable.name};"
 
 class _ShaderInput:
-    def __init__(self, name, tp, negative):
+    def __init__(self, name, tp, wrappers):
         self.name = name
         self.type = tp
         self.components = "xyzw"
-        self.negative = negative
+        self.wrappers = wrappers
 
     def tune_components(self, res, command):
         self.components = res.components
 
     def __str__(self):
-        return f"{'-' if self.negative else ''}{self.name}.{self.components}"
+        return f"{self.wrappers[0]}{self.name}.{self.components}{self.wrappers[1]}"
 
 
 class _Constant:
@@ -300,9 +322,8 @@ class _Constant:
         self.values = list(map(caster, vals))
 
     def tune_components(self, res, command):
-        if len(res.components) == 1:
-            if len(self.values) == 1:
-                return
+        if len(self.values) == 1:
+            return
         self.values = [self.values["xyzw".index(c)] for c in res.components]
 
     def __str__(self):
@@ -393,16 +414,20 @@ SHADER_INPUT_NAMES = {
 def _parse_operands(operands, context):
     parsed = []
     for operand in operands:
-        negative = operand.startswith('-')
-        if negative:
+        wrappers = ("", "")
+        if operand.startswith('-'):
+            wrappers = ("-", "")
             operand = operand[1:]
+        if operand.startswith("abs("):
+            wrappers = ("abs(", ")")
+            operand = operand[4:-1]
 
         if operand[0] == 'r' and operand[1:].split('.')[0].isdigit():
-            parsed.append(context.get_variable_by_reg(*operand.split('.'), negative))
+            parsed.append(context.get_variable_by_reg(*operand.split('.'), wrappers))
         elif operand.split('.')[0] in SHADER_INPUT_NAMES:
-            parsed.append(_ShaderInput(operand.split('.')[0], SHADER_INPUT_NAMES[operand.split('.')[0]], negative))
+            parsed.append(_ShaderInput(operand.split('.')[0], SHADER_INPUT_NAMES[operand.split('.')[0]], wrappers))
         elif operand.split('.')[0] in context.external_inputs:
-            parsed.append(_ShaderInput(operand.split('.')[0], context.external_inputs[operand.split('.')[0]], negative))
+            parsed.append(_ShaderInput(operand.split('.')[0], context.external_inputs[operand.split('.')[0]], wrappers))
         elif operand.split('.')[0] in context.internal_inputs:
             inp = context.internal_inputs[operand.split('.')[0]]
             components = operand.split('.')[1] if "." in operand else inp.get_components()
@@ -493,6 +518,8 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
             processed.append(_StoreStatement(command[0], command[1:], context))
         else:
             raise Exception(f"Unsupported command {command}")
+        print(processed[-1])
+
     for key, variables in context.replacer.items():
         names = {v.name for v in variables}
         processed = [_Initializer(variables[0], context)] + processed

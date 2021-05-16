@@ -139,7 +139,7 @@ class _CombinedValue:
 
     def __str__(self):
         vals = [
-            (f'{var_name}.{var_comp}' if len(var.components) > 1 else var_name) for var_name, var_comp, var in self.values
+            (f'{var.name}.{var_comp}' if len(var.components) > 1 else var_name) for var_name, var_comp, var in self.values
         ]
         return f"{'-' if self.negative else ''}{type_names[self.type]}{len(self.values)}({', '.join(vals)})"
 

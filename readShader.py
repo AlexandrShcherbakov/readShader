@@ -111,11 +111,12 @@ special_res_components = {
 }
 
 class _Variable:
-    def __init__(self, name, register, components, tp):
+    def __init__(self, name, register, components, tp, const_value=None):
         self.name = name
         self.register = register
         self.components = components
         self.type = tp
+        self.const_value = const_value
 
     def __str__(self):
         return self.name
@@ -167,9 +168,16 @@ class _CombinedValue:
         else:
             self.values = [self.values["xyzw".index(c)] for c in res.components]
 
+    def _get_comp_access(self, value):
+        if len(value) == 1:
+            return value[2].name
+        if value[2].const_value:
+            return str(value[2].const_value.values["xyzw".index(value[1])])
+        return f"{value[2].name}.{value[1]}"
+
     def __str__(self):
         vals = [
-            (f'{var.name}.{var_comp}' if len(var.components) > 1 else var_name) for var_name, var_comp, var in self.values
+            self._get_comp_access(val) for val in self.values
         ]
         return f"{self.wrappers[0]}{type_names[self.type]}{len(self.values)}({', '.join(vals)}){self.wrappers[1]}"
 
@@ -184,11 +192,11 @@ class _Context:
         self.tabs = 0
         self.replacer = dict()
 
-    def add_variable(self, reg, tp):
+    def add_variable(self, reg, tp, const_value):
         reg_name, components = reg.split('.')
         variable_name = f"var_{self.variables_count}"
         self.variables_count += 1
-        var = _Variable(variable_name, reg_name, components, tp)
+        var = _Variable(variable_name, reg_name, components, tp, const_value)
         self.variables_map[self.stack[-1]].update({f"{reg_name}.{components[i]}": (variable_name, "xyzw"[i], var) for i in range(len(components))})
         return var
     
@@ -247,8 +255,11 @@ class _ResStatement:
         self.command, self.inplace_without_brackets = replace_table_operations[command]
         # Parse operands
         self.operands = _parse_operands(operands, context)
+        const_value = None
+        if command == "mov" and len(self.operands) == 1 and isinstance(self.operands[0], _Constant):
+            const_value = self.operands[0]
         # Evaluate result variable
-        self.res = context.add_variable(res, type_by_instr[command](self.operands))
+        self.res = context.add_variable(res, type_by_instr[command](self.operands), const_value)
         # Tune operands
         _tune_operands(self.res, command, self.operands)
 
@@ -597,6 +608,10 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
             if isinstance(p, _ResStatement) and p.res.name in names:
                 p.initialize = False
                 p.res = variables[0]
+
+    for i in reversed(range(len(processed))):
+        if isinstance(processed[i], _ResStatement) and processed[i].res.const_value:
+            del processed[i]
     
     variable_usages = collections.defaultdict(lambda:0)
     for st in processed:

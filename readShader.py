@@ -95,6 +95,7 @@ type_by_instr.update({
     "ftou": lambda args: _UINT,
     "ftoi": lambda args: _INT,
     "ld_indexable(texture2darray)(float,float,float,float)": lambda args: _FLOAT,
+    "ld_indexable": lambda args: args[1].type,
     "ge": lambda args: _BOOL,
     "ine": lambda args: _BOOL,
     "ne": lambda args: _BOOL,
@@ -550,7 +551,7 @@ def replace_known_patterns(lines, var_usages):
             lines[i].res = lines[i + 1].res
             to_erase.append(i + 1)
     
-    for i in reversed(to_erase):
+    for i in sorted(to_erase, reverse=True):
         lines = lines[:i] + lines[i + 1:]
     return lines
 
@@ -568,7 +569,7 @@ def reduce_lines_count(lines, var_usages):
                         to_erase.append(j)
                         break
     
-    for i in reversed(to_erase):
+    for i in sorted(to_erase, reverse=True):
         lines = lines[:i] + lines[i + 1:]
     return lines
 

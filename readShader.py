@@ -51,6 +51,7 @@ replace_table_operations = {
     "div_sat": ("saturate({} / {})", True),
     "ld_indexable": ("{1.name}[{0}].{1.components}", True),
     "ld_structured": ("{2.name}[{0} + {1}].{2.components}", True),
+    "sample_l": ("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True)
 }
 
 arg_sizes = {
@@ -356,6 +357,25 @@ class _Tex2DArray:
     def get_usage_class(self):
         return _Tex2DArrayUsage
 
+class _Tex3D:
+    def __init__(self, name, tp):
+        self.name = name
+        self.type = tp
+
+    def get_usage_class(self):
+        return _Tex3DUsage
+
+
+class _Sampler:
+    def __init__(self, name):
+        self.name = name
+
+    def get_usage_class(self):
+        return _SamplerUsage
+
+    def get_components(self):
+        return None
+
 class _SBuffer:
     def __init__(self, name, tp):
         self.name = name
@@ -391,6 +411,25 @@ class _Tex2DArrayUsage:
 
     def tune_components(self, res, command):
         self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+
+class _Tex3DUsage:
+    def __init__(self, array, components):
+        self.name = array.name
+        self.type = array.type
+        self.components = components
+
+    def tune_components(self, res, command):
+        self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+
+class _SamplerUsage:
+    def __init__(self, array, components):
+        self.name = array.name
+
+    def tune_components(self, res, command):
+        pass
+
+    def __str__(self):
+        return self.name
 
 class _SBufferUsage:
     def __init__(self, array, components):
@@ -483,6 +522,10 @@ def process_inputs(inputs):
             res[inp[1]] = _UAV(inp[1], _UNKNOWN)
         elif inp[0] == "dcl_uav_structured":
             res[inp[1]] = _UAVSBuffer(inp[1], _UNKNOWN)
+        elif inp[0] == "dcl_resource_texture3d":
+            res[inp[2]] = _Tex3D(inp[2], type_names.index(inp[1][1:].split(',')[0]))
+        elif inp[0] == "dcl_sampler":
+            res[inp[1]] = _Sampler(inp[1])
     return res
 
 

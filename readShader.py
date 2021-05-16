@@ -334,6 +334,20 @@ class _Constant:
         return f"{type_names[self.type]}{len(self.values)}({', '.join(list(map(str, self.values)))})"
 
 
+class _CbAccessor:
+    def __init__(self, cb_idx, variable, offset, components):
+        self.cb_idx = cb_idx
+        self.variable_accessor = variable
+        self.components = components
+        self.offset = offset
+
+    def tune_components(self, res, command):
+        self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+
+    def __str__(self):
+        return f"cb{self.cb_idx}[{self.variable_accessor} + {self.offset}].{self.components}"
+
+
 class _Tex2DArray:
     def __init__(self, name, tp):
         self.name = name
@@ -434,6 +448,12 @@ def _parse_operands(operands, context):
             parsed.append(inp.get_usage_class()(inp, components))
         elif operand.startswith("l("):
             parsed.append(_Constant(operand[2: -1]))
+        elif operand.startswith("cb"):
+            cb_idx = int(operand[2:operand.index("[")])
+            variable = context.get_variable_by_reg(*operand[operand.index("[") + 1: operand.index("+")].split('.'), ("", ""))
+            offset = int(operand[operand.index("+") + 1: operand.index("]")])
+            components = operand.split(".")[-1]
+            parsed.append(_CbAccessor(cb_idx, variable, offset, components))
         else:
             raise Exception(f"Unknown operand {operand}")
     return parsed

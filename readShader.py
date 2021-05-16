@@ -265,6 +265,7 @@ class _ResStatement:
 
         self.tabs = context.tabs
         self.initialize = initialize
+        self.scope_id = context.stack[-1]
 
     def __str__(self):
         prefix = self.res.get_type() + " " if self.initialize else ""
@@ -290,6 +291,9 @@ class _Statement:
             scope_modifiers[command](context)
         if command == "else" or command == "endif":
             self.tabs -= 1
+        self.scope_id = context.stack[-1]
+        if command.startswith("if"):
+            self.scope_id = context.stack[-2]
 
     def __str__(self):
         return '  ' * self.tabs + self.command.format(*self.operands)
@@ -301,6 +305,7 @@ class _StoreStatement:
         self.operands = _parse_operands(operands, context)
         self.tabs = context.tabs
         _tune_operands(self.operands[0], command, [self.operands[-1]])
+        self.scope_id = context.stack[-1]
 
     def __str__(self):
         return '  ' * self.tabs + self.command.format(*self.operands) + ";"
@@ -575,7 +580,7 @@ def reduce_lines_count(lines, var_usages):
         for k in range(len(lines[i].operands)):
             if isinstance(lines[i].operands[k], _VariableAccessor) and var_usages[lines[i].operands[k].variable.name] == 1:
                 for j in range(i):
-                    if isinstance(lines[j], _ResStatement) and lines[j].res == lines[i].operands[k].variable:
+                    if isinstance(lines[j], _ResStatement) and lines[j].res == lines[i].operands[k].variable and lines[j].scope_id == lines[i].scope_id:
                         lines[i].operands[k] = _TmpResStatement(lines[j])
                         to_erase.append(j)
                         break

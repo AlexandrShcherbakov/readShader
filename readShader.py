@@ -127,6 +127,20 @@ class _Variable:
         return f"{type_names[self.type]}{len(self.components)}"
 
 
+class ShaderOutput:
+    def __init__(self, name, components, tp = None):
+        self.name = name
+        self.components = components
+        # self.type = tp
+
+    def __str__(self):
+        return self.name
+
+    # def get_type(self):
+    #     if len(self.components) == 1:
+    #         return type_names[self.type]
+    #     return f"{type_names[self.type]}{len(self.components)}"
+
 class _VariableAccessor:
     def __init__(self, variable, components, wrappers):
         self.variable = variable
@@ -259,7 +273,11 @@ class _ResStatement:
         if command == "mov" and len(self.operands) == 1 and isinstance(self.operands[0], _Constant):
             const_value = self.operands[0]
         # Evaluate result variable
-        self.res = context.add_variable(res, type_by_instr[command](self.operands), const_value)
+        if res[0] == "o":
+            self.res = ShaderOutput(*res.split("."))
+            initialize = False
+        else:
+            self.res = context.add_variable(res, type_by_instr[command](self.operands), const_value)
         # Tune operands
         _tune_operands(self.res, command, self.operands)
 
@@ -615,7 +633,7 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
                 p.res = variables[0]
 
     for i in reversed(range(len(processed))):
-        if isinstance(processed[i], _ResStatement) and processed[i].res.const_value:
+        if isinstance(processed[i], _ResStatement) and isinstance(processed[i].res, _Variable) and processed[i].res.const_value:
             del processed[i]
     
     variable_usages = collections.defaultdict(lambda:0)

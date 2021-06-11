@@ -1,0 +1,67 @@
+Shader hash bcf4c0cd-2a2bf5c5-942ac464-77cca175
+
+cs_5_0|
+      dcl_globalFlags refactoringAllowed
+      dcl_constantbuffer cb0[2], immediateIndexed
+      dcl_resource_texture2darray (float,float,float,float) g_emitter_instances (t0)
+      dcl_resource_texture2darray (float,float,float,float) g_particle_instances (t1)
+      dcl_resource_structured g_emitter_constant_buffer_prepare_sortdata (t2), 16
+      dcl_uav_structured g_rw_sorted_data_buffer (u0), 8
+      dcl_uav_raw g_draw_indirect_buffer (u1)
+      dcl_input vThreadID.xy
+      dcl_temps 3
+      dcl_thread_group 16, 16, 1
+   0: utof r0.xy, vThreadID.xyxx
+   1: mad r0.x, r0.y, g_particle_instance_tex_width.x, r0.x
+   2: ftou r0.x, r0.x
+   3: mov r1.xy, vThreadID.xyxx
+   4: mov r1.w, l(0)
+   5: ld_indexable(texture2darray)(float,float,float,float) r0.y, r1.xyww, g_particle_instances.yxzw
+   6: ftoi r0.y, r0.y
+   7: ine r0.z, r0.y, l(-1)
+   8: if_nz r0.z
+   9:   mov r1.z, l(1)
+  10:   ld_indexable(texture2darray)(float,float,float,float) r1.xyz, r1.xyzw, g_particle_instances.xyzw
+  11:   utof r0.y, r0.y
+  12:   mul r0.z, r0.y, g_emitter_instance_tex_width.x
+  13:   ge r0.z, r0.z, -r0.z
+  14:   movc r0.z, r0.z, g_emitter_instance_tex_width.x, -g_emitter_instance_tex_width.x
+  15:   div r0.w, l(1.0000, 1.0000, 1.0000, 1.0000), r0.z
+  16:   mul r0.w, r0.w, r0.y
+  17:   frc r0.w, r0.w
+  18:   mul r0.z, r0.w, r0.z
+  19:   div r0.y, r0.y, g_emitter_instance_tex_width.x
+  20:   ftou r2.xy, r0.zyzz
+  21:   mov r2.zw, l(0, 0, 3, 0)
+  22:   ld_indexable(texture2darray)(float,float,float,float) r0.y, r2.xyzw, g_emitter_instances.yxzw
+  23:   ftoi r0.y, r0.y
+  24:   ld_structured_indexable(structured_buffer, stride=16)(mixed,mixed,mixed,mixed) r0.y, r0.y, l(0), g_emitter_constant_buffer_prepare_sortdata.xxxx
+  25:   and r0.z, r0.y, l(0x00100000)
+  26:   if_nz r0.z
+  27:     add r2.xyz, r1.xyzx, -vfx_camera_position.xyzx
+  28:     dp3 r0.z, r2.xyzx, r2.xyzx
+  29:     sqrt r0.z, r0.z
+  30:     min r0.z, r0.z, l(999999.0000)
+  31:     add r2.x, r0.z, l(-1000000.0000)
+  32:     atomic_iadd g_draw_indirect_buffer, l(16), l(1)
+  33:   else
+  34:     and r0.y, r0.y, l(0x00400000)
+  35:     if_nz r0.y
+  36:       mad r0.y, r1.y, l(10000000000.0000), r1.x
+  37:       min r0.y, r0.y, l(100000002004087740000.0000)
+  38:       add r2.x, r0.y, l(-100000002004087740000.0000)
+  39:       atomic_iadd g_draw_indirect_buffer, l(0), l(1)
+  40:     else
+  41:       add r0.yzw, r1.xxyz, -vfx_camera_position.xxyz
+  42:       dp3 r0.y, r0.yzwy, r0.yzwy
+  43:       sqrt r0.y, r0.y
+  44:       min r2.x, r0.y, l(999999.0000)
+  45:       atomic_iadd g_draw_indirect_buffer, l(32), l(1)
+  46:     endif
+  47:   endif
+  48: else
+  49:   mov r2.x, l(100000002004087740000.0000)
+  50: endif
+  51: utof r2.y, r0.x
+  52: store_structured g_rw_sorted_data_buffer.xy, r0.x, l(0), r2.xyxx
+  53: ret

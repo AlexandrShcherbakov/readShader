@@ -1,0 +1,70 @@
+Shader hash 47504e6c-475cb402-66c08d53-6f1542f9
+
+ps_5_0
+      dcl_globalFlags refactoringAllowed
+      dcl_constantbuffer PerFrame.GlobalFogColorAndHFogMaxOpacity, immediateIndexed
+      dcl_constantbuffer cb0[17], immediateIndexed
+      dcl_sampler $EmissiveTexSampler (s1), mode_default
+      dcl_sampler $LightBuffer1Sampler (s6), mode_default
+      dcl_sampler GlobalDepthBufferSampler (s10), mode_default
+      dcl_resource_texture2d (float,float,float,float) $EmissiveTex (t1)
+      dcl_resource_texture2d (float,float,float,float) $LightBuffer1 (t6)
+      dcl_resource_texture2d (float,float,float,float) GlobalDepthBuffer (t10)
+      dcl_input_ps_siv v0.xy, position
+      dcl_output o0.xyzw
+      dcl_temps 4
+   0: mad r0.xyzw, v0.xyxy, PerDrawCall.CameraDistFogParams.zwxy, PerDrawCall.FixedPointDistFogParams.zwxy
+   1: sample_indexable(texture2d)(float,float,float,float) r1.x, r0.zwzz, GlobalDepthBuffer.xyzw, GlobalDepthBufferSampler
+   2: lt r1.y, cb0[16].w, l(1.0000)
+   3: eq r1.z, r1.x, l(1.0000)
+   4: and r1.y, r1.z, r1.y
+   5: discard_nz r1.y
+   6: sample_indexable(texture2d)(float,float,float,float) r1.yzw, r0.zwzz, $LightBuffer1.wxyz, $LightBuffer1Sampler
+   7: sample_indexable(texture2d)(float,float,float,float) r2.xyzw, r0.zwzz, $EmissiveTex.xyzw, $EmissiveTexSampler
+   8: mul r2.xyz, r2.wwww, r2.xyzx
+   9: mad r1.yzw, r1.yyzw, l(0.0000, 1024.0000, 1024.0000, 1024.0000), r2.xxyz
+  10: mad r0.w, r1.x, PerDrawCall.FixedPointDistFogPos.z, PerDrawCall.FixedPointDistFogPos.w
+  11: mov r0.z, l(1.0000)
+  12: div r0.xyz, r0.xyzx, r0.wwww
+  13: mul r2.xyzw, r0.yyyy, PerFrame.InvViewMatrix[0].xyzw
+  14: mad r2.xyzw, PerFrame.InvTViewMatrix[2].xyzw, r0.xxxx, r2.xyzw
+  15: mad r2.xyzw, PerFrame.InvViewMatrix[1].xyzw, r0.zzzz, r2.xyzw
+  16: add r2.xyzw, r2.xyzw, PerFrame.InvViewMatrix[2].xyzw
+  17: mad r1.x, r2.y, PerFrame.InvViewMatrix[3].x, PerFrame.InvViewMatrix[3].y
+  18: max r1.x, r1.x, PerFrame.InvViewMatrix[3].z
+  19: mov r3.xyz, -PerFrame.GlobalPosDecodingParams.xyzx
+  20: mov r3.w, l(-1.0000)
+  21: add r2.xyzw, r2.xyzw, r3.xyzw
+  22: dp4 r2.x, r2.xyzw, r2.xyzw
+  23: sqrt r2.x, r2.x
+  24: add r2.x, r2.x, -PerFrame.GlobalGBufferOffset.x
+  25: max r2.x, r2.x, l(0)
+  26: mul r2.x, r2.x, PerFrame.GlobalGBufferOffset.y
+  27: mul r2.x, r2.x, r2.x
+  28: mul r2.x, r2.x, l(1.4427)
+  29: exp r2.x, r2.x
+  30: div r2.x, l(1.0000, 1.0000, 1.0000, 1.0000), r2.x
+  31: mov r0.w, l(1.0000)
+  32: dp4 r0.x, r0.xyzw, r0.xyzw
+  33: sqrt r0.x, r0.x
+  34: add r0.x, r0.x, -PerFrame.GlobalGBufferScale.x
+  35: max r0.x, r0.x, l(0)
+  36: mul r0.x, r0.x, PerFrame.GlobalGBufferScale.y
+  37: mul r0.x, r0.x, r0.x
+  38: mul r0.x, r0.x, l(1.4427)
+  39: exp r0.x, r0.x
+  40: div r0.x, l(1.0000, 1.0000, 1.0000, 1.0000), r0.x
+  41: max r0.y, r2.x, PerFrame.GlobalGBufferOffset.z
+  42: max r0.x, r0.x, PerFrame.GlobalGBufferScale.z
+  43: add r0.xy, -r0.xyxx, l(1.0000, 1.0000, 0.0000, 0.0000)
+  44: mul r0.x, r0.x, PerFrame.GlobalGBufferScale.w
+  45: mad_sat r0.x, r0.y, PerFrame.GlobalGBufferOffset.w, r0.x
+  46: add r0.x, -r0.x, l(1.0000)
+  47: min r0.x, r0.x, r1.x
+  48: max r0.x, r0.x, l(0)
+  49: mul r0.yzw, cb0[10].xxyz, cb0[16].zzzz
+  50: mad r1.xyz, -cb0[10].xyzx, cb0[16].zzzz, r1.yzwy
+  51: mad r0.xyz, r0.xxxx, r1.xyzx, r0.yzwy
+  52: mul o0.xyz, r0.xyzx, l(0.0010, 0.0010, 0.0010, 0.0000)
+  53: mov o0.w, l(1.0000)
+  54: ret

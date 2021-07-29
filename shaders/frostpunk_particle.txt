@@ -1,0 +1,101 @@
+Shader hash 2feb17b0-39462606-cc1f0551-f6d30da9
+
+ps_5_0
+      dcl_globalFlags refactoringAllowed
+      dcl_constantbuffer PerFrame.SunInvLightDirectionAndAmbientStrength, immediateIndexed
+      dcl_constantbuffer cb5[222], immediateIndexed
+      dcl_sampler $AlbedoSampler (s0), mode_default
+      dcl_sampler $AmbientCubeSampler (s5), mode_default
+      dcl_resource_texture2d (float,float,float,float) $AlbedoTexture (t0)
+      dcl_resource_texturecube (float,float,float,float) $AmbientCube (t5)
+      dcl_input_ps linear v1.xyzw
+      dcl_input_ps linear v2.xyzw
+      dcl_input_ps linear v4.xyz
+      dcl_input_ps linear v5.xyw
+      dcl_input_ps linear v6.x
+      dcl_input_ps linear v8.xyz
+      dcl_input_ps linear v9.xyz
+      dcl_input_ps linear v10.xyz
+      dcl_output o0.xyzw
+      dcl_temps 4
+   0: sample_indexable(texture2d)(float,float,float,float) r0.xyzw, v1.xyxx, $AlbedoTexture.xyzw, $AlbedoSampler
+   1: mul r1.x, r0.w, v2.w
+   2: mad r1.x, r1.x, PerObject.ComboDesaturationAlphaTest.y, PerObject.ComboDesaturationAlphaTest.z
+   3: lt r1.x, r1.x, l(0)
+   4: discard_nz r1.x
+   5: sample_indexable(texture2d)(float,float,float,float) r1.xyzw, v1.zwzz, $AlbedoTexture.xyzw, $AlbedoSampler
+   6: add r1.xyzw, -r0.xyzw, r1.xyzw
+   7: mad r0.xyzw, v6.xxxx, r1.xyzw, r0.xyzw
+   8: add r1.x, -v2.w, l(1.0000)
+   9: add r1.y, r0.w, -r1.x
+  10: lt r1.y, r1.y, l(0)
+  11: lt r1.z, l(0), PerObject.AlphaBasedAnimationEnabledBlendZone.x
+  12: and r1.y, r1.z, r1.y
+  13: discard_nz r1.y
+  14: add_sat r1.y, r1.x, PerObject.AlphaBasedAnimationEnabledBlendZone.y
+  15: min r1.y, r0.w, r1.y
+  16: add r1.x, -r1.x, r1.y
+  17: div r1.x, r1.x, PerObject.AlphaBasedAnimationEnabledBlendZone.y
+  18: eq r1.y, l(0), PerObject.AlphaBasedAnimationEnabledBlendZone.y
+  19: movc r1.x, r1.y, l(1.0000), r1.x
+  20: mul r0.w, r0.w, v2.w
+  21: movc o0.w, r1.z, r1.x, r0.w
+  22: log r0.xy, abs(r0.yxyy)
+  23: mul r1.xyz, r0.zzzz, v4.xyzx
+  24: mul r0.xy, r0.xyxx, l(0.4545, 0.4545, 0.0000, 0.0000)
+  25: exp r0.xy, r0.xyxx
+  26: mad r0.xy, r0.xyxx, l(2.0000, 2.0000, 0.0000, 0.0000), l(-1.0000, -1.0000, 0.0000, 0.0000)
+  27: mul r2.xyz, r0.xxxx, v10.xyzx
+  28: mad r2.xyz, v9.xyzx, r0.yyyy, r2.xyzx
+  29: dp2 r0.x, r0.xyxx, r0.xyxx
+  30: add r0.x, -r0.x, l(1.0000)
+  31: max r0.x, r0.x, l(0.0001)
+  32: sqrt r0.x, r0.x
+  33: mad r0.xyz, v8.xyzx, r0.xxxx, r2.xyzx
+  34: dp3 r0.w, r0.xyzx, r0.xyzx
+  35: rsq r0.w, r0.w
+  36: mul r0.xyz, r0.wwww, r0.xyzx
+  37: dp3 r0.w, r0.xyzx, PerObject.InvCustomSunDirVS.xyzx
+  38: max r1.w, r0.w, l(0.0200)
+  39: add r2.xyzw, r0.wwww, l(-0.2500, 0.2500, -0.5000, 0.5000)
+  40: max r2.xyzw, r2.xyzw, l(0.0200, 0.0200, 0.0200, 0.0200)
+  41: min r2.xyzw, r2.xyzw, l(1.0000, 1.0000, 1.0000, 1.0000)
+  42: min r0.w, r1.w, l(1.0000)
+  43: add r0.w, r2.x, r0.w
+  44: add r0.w, r2.y, r0.w
+  45: add r0.w, r2.z, r0.w
+  46: add r0.w, r2.w, r0.w
+  47: mul r0.w, r0.w, l(0.2000)
+  48: mul r2.xyz, PerObject.CustomSunColorAndIlluminance.wwww, PerObject.CustomSunColorAndIlluminance.xyzx
+  49: mul r2.xyz, r2.xyzx, v5.wwww
+  50: mul r2.xyz, r0.wwww, r2.xyzx
+  51: mul r2.xyz, r2.xyzx, v2.xyzx
+  52: dp3 r0.w, r0.xyzx, PerObject.InvSunDirVS.xyzx
+  53: max r1.w, r0.w, l(0.0200)
+  54: add r3.xyzw, r0.wwww, l(-0.2500, 0.2500, -0.5000, 0.5000)
+  55: max r3.xyzw, r3.xyzw, l(0.0200, 0.0200, 0.0200, 0.0200)
+  56: min r3.xyzw, r3.xyzw, l(1.0000, 1.0000, 1.0000, 1.0000)
+  57: min r0.w, r1.w, l(1.0000)
+  58: add r0.w, r3.x, r0.w
+  59: add r0.w, r3.y, r0.w
+  60: add r0.w, r3.z, r0.w
+  61: add r0.w, r3.w, r0.w
+  62: mul r0.w, r0.w, l(0.2000)
+  63: mul r3.xyz, PerFrame.DirLightColorAlphaOverdraw.xyzx, PerFrame.DirLightIlluminanceAndExposureAndInvExposure.xxxx
+  64: mul r3.xyz, r0.wwww, r3.xyzx
+  65: mul r3.xyz, r3.xyzx, v2.xyzx
+  66: max r0.w, PerFrame.InvSunDiffuseDirection.y, l(0.0100)
+  67: min r0.w, r0.w, l(0.1500)
+  68: add r0.w, r0.w, l(-0.0100)
+  69: mul r0.w, r0.w, l(7.1429)
+  70: mul r0.w, r0.w, r0.w
+  71: mad r2.xyz, r3.xyzx, r0.wwww, r2.xyzx
+  72: resinfo_indexable(texturecube)(float,float,float,float)_float r0.w, l(0), $AmbientCube.xyzw
+  73: add r0.w, r0.w, l(-1.0000)
+  74: sample_l(texturecube)(float,float,float,float) r0.xyz, r0.xyzx, $AmbientCube.xyzw, $AmbientCubeSampler, r0.w
+  75: mul r0.xyz, r0.xyzx, l(1024.0000, 1024.0000, 1024.0000, 0.0000)
+  76: mad r2.xyz, r0.xyzx, v5.xxxx, r2.xyzx
+  77: mad r0.xyz, r0.xyzx, v5.yyyy, r2.xyzx
+  78: mad r0.xyz, r1.xyzx, PerFrame.DirLightIlluminanceAndExposureAndInvExposure.zzzz, r0.xyzx
+  79: mul o0.xyz, r0.xyzx, l(0.0010, 0.0010, 0.0010, 0.0000)
+  80: ret

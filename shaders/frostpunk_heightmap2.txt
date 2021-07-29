@@ -1,0 +1,37 @@
+Shader hash 58821bdd-80e94304-3bbe8c29-2fab6fff
+
+ps_5_0
+      dcl_globalFlags refactoringAllowed
+      dcl_sampler $MainTextureSampler (s0), mode_default
+      dcl_sampler $HeightBaseTextureSampler (s1), mode_default
+      dcl_sampler $HeightMaskTextureSampler (s2), mode_default
+      dcl_sampler $SnowfallTextureSampler (s3), mode_default
+      dcl_sampler $HeightmapReferenceSampler (s4), mode_default
+      dcl_resource_texture2d (float,float,float,float) $MainTexture (t0)
+      dcl_resource_texture2d (float,float,float,float) $HeightBaseTexture (t1)
+      dcl_resource_texture2d (float,float,float,float) $HeightMaskTexture (t2)
+      dcl_resource_texture2d (float,float,float,float) $SnowfallTexture (t3)
+      dcl_resource_texture2d (float,float,float,float) $HeightmapReferenceTexture (t4)
+      dcl_input_ps linear v1.xy
+      dcl_input_ps linear v2.yzw
+      dcl_input_ps linear v3.xyzw
+      dcl_output o0.xyzw
+      dcl_temps 1
+   0: add r0.xy, v3.wwww, v3.xyxx
+   1: mul r0.xy, r0.xyxx, v3.zzzz
+   2: mad r0.xy, v1.xyxx, v2.yyyy, r0.xyxx
+   3: sample_indexable(texture2d)(float,float,float,float) r0.x, r0.xyxx, $SnowfallTexture.wxyz, $SnowfallTextureSampler
+   4: add_sat r0.x, r0.x, l(0.5000)
+   5: sample_indexable(texture2d)(float,float,float,float) r0.yz, v1.xyxx, $HeightMaskTexture.zxyw, $HeightMaskTextureSampler
+   6: max r0.y, r0.z, r0.y
+   7: mad_sat r0.x, r0.x, v2.z, -r0.y
+   8: sample_indexable(texture2d)(float,float,float,float) r0.y, v1.xyxx, $MainTexture.yxzw, $MainTextureSampler
+   9: add r0.x, r0.x, r0.y
+  10: max r0.x, r0.x, l(0)
+  11: sample_indexable(texture2d)(float,float,float,float) r0.y, v1.xyxx, $HeightBaseTexture.yxzw, $HeightBaseTextureSampler
+  12: mov_sat r0.y, r0.y
+  13: sample_indexable(texture2d)(float,float,float,float) r0.z, v1.xyxx, $HeightmapReferenceTexture.yzxw, $HeightmapReferenceSampler
+  14: min r0.y, r0.z, r0.y
+  15: min o0.x, r0.y, r0.x
+  16: mov o0.yzw, v2.yyzw
+  17: ret

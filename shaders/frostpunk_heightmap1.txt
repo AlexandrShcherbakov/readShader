@@ -1,0 +1,49 @@
+Shader hash 68ee61fe-6deeaa4d-35a22f57-cbbd7ae6
+
+ps_5_0
+      dcl_globalFlags refactoringAllowed
+      dcl_sampler $MainTextureSampler (s0), mode_default
+      dcl_resource_texture2d (float,float,float,float) $MainTexture (t0)
+      dcl_input_ps_siv v0.xy, position
+      dcl_input_ps linear v1.xy
+      dcl_input_ps linear v2.xyzw
+      dcl_output o0.xyzw
+      dcl_temps 2
+   0: mul r0.xy, v0.xyxx, v2.zzzz
+   1: round_ni r0.zw, r0.xxxy
+   2: mad r0.z, r0.w, l(113.0000), r0.z
+   3: sincos r0.w, null, r0.z
+   4: add r1.xyz, r0.zzzz, l(1.0000, 113.0000, 114.0000, 0.0000)
+   5: sincos r1.xyz, null, r1.xyzx
+   6: mul r1.xyz, r1.xyzx, l(43758.5469, 43758.5469, 43758.5469, 0.0000)
+   7: frc r1.xyz, r1.xyzx
+   8: mul r0.z, r0.w, l(43758.5469)
+   9: frc r0.xyz, r0.xyzx
+  10: add r0.w, -r0.z, r1.x
+  11: mul r1.xw, r0.xxxy, r0.xxxy
+  12: mad r0.xy, -r0.xyxx, l(2.0000, 2.0000, 0.0000, 0.0000), l(3.0000, 3.0000, 0.0000, 0.0000)
+  13: mul r0.xy, r0.xyxx, r1.xwxx
+  14: mad r0.z, r0.x, r0.w, r0.z
+  15: add r0.w, -r1.y, r1.z
+  16: mad r0.x, r0.x, r0.w, r1.y
+  17: add r0.x, -r0.z, r0.x
+  18: mad r0.x, r0.y, r0.x, r0.z
+  19: sample_indexable(texture2d)(float,float,float,float) r0.y, v1.xyxx, $MainTexture.xwyz, $MainTextureSampler
+  20: add r0.z, -r0.y, l(1.0000)
+  21: mul r0.y, -r0.y, v2.x
+  22: mul r0.x, r0.z, r0.x
+  23: mul r0.x, r0.x, v2.x
+  24: add r0.zw, v1.xxxy, l(0.0000, 0.0000, -0.5000, -0.5000)
+  25: dp2 r0.z, r0.zwzz, r0.zwzz
+  26: sqrt r0.z, r0.z
+  27: add r0.z, r0.z, l(-0.5000)
+  28: div r0.w, l(1.0000, 1.0000, 1.0000, 1.0000), -v2.y
+  29: mul_sat r0.z, r0.w, r0.z
+  30: mad r0.w, r0.z, l(-2.0000), l(3.0000)
+  31: mul r0.z, r0.z, r0.z
+  32: mul r0.z, r0.z, r0.w
+  33: mul r0.x, r0.z, r0.x
+  34: mul r0.x, r0.x, v2.w
+  35: mad o0.x, r0.y, r0.z, -r0.x
+  36: mov o0.yzw, v2.yyzw
+  37: ret

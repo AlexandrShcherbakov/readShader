@@ -56,17 +56,26 @@ replace_table_operations = {
     "div_sat": ("saturate({} / {})", True),
     "ld_indexable": ("{1.name}[{0}].{1.components}", True),
     "ld_structured": ("{2.name}[{0} + {1}].{2.components}", True),
-    "sample_l": ("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True)
+    "sample_l": ("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
+    "sample_indexable(texture2d)(float,float,float,float)": ("{1.name}.Sample({2}, {0}).{1.components}", True),
+    "mad_sat": ("saturate({} * {} + {})", True),
+    "add_sat": ("saturate({} + {})", True),
+    "log": ("log({})", True),
+    "sample_l(texturecube)(float,float,float,float)": ("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
+    "mov_sat": ("saturate({})", True),
 }
 
 arg_sizes = {
     "ld_indexable(texture2darray)(float,float,float,float)": 3,
     "ld_structured": 1,
+    "sample_l(texturecube)(float,float,float,float)": 3,
 }
 
 replace_table_special = {
     "atomic_iadd": "InterlockedAdd({0.name}[{1}], {2})",
-    "store_structured": "{0.name}[{1} + {2}].{0.components} = {3}"
+    "store_structured": "{0.name}[{1} + {2}].{0.components} = {3}",
+    "resinfo_indexable(texturecube)(float,float,float,float)_float": "{2.name}.GetDimensions({1}, {0})",
+    "sincos": "sincos({}, {}, {})"
 }
 
 replace_table_operators = {
@@ -74,6 +83,7 @@ replace_table_operators = {
     "else": "}} else {{",
     "endif": "}}",
     "ret": "return",
+    "discard_nz": "if ({}) discard;",
 }
 
 scope_modifiers = {
@@ -167,7 +177,7 @@ class _VariableAccessor:
         return f"{self.wrappers[0]}{self.variable}{comps}{self.wrappers[1]}"
 
     def __eq__(self, a):
-        return self.variable == a.variable and self.components == a.components and self.wrappers == a.wrappers
+        return type(self) == type(a) and self.variable == a.variable and self.components == a.components and self.wrappers == a.wrappers
 
 
 class _CombinedValue:
@@ -398,6 +408,22 @@ class _Tex2DArray:
     def get_usage_class(self):
         return _Tex2DArrayUsage
 
+class _Tex2D:
+    def __init__(self, name, tp):
+        self.name = name
+        self.type = tp
+
+    def get_usage_class(self):
+        return _Tex2DUsage
+
+class _TexCube:
+    def __init__(self, name, tp):
+        self.name = name
+        self.type = tp
+
+    def get_usage_class(self):
+        return _TexCubeUsage
+
 class _Tex3D:
     def __init__(self, name, tp):
         self.name = name
@@ -445,6 +471,24 @@ class _UAV:
         return "x"
 
 class _Tex2DArrayUsage:
+    def __init__(self, array, components):
+        self.name = array.name
+        self.type = array.type
+        self.components = components
+
+    def tune_components(self, res, command):
+        self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+
+class _Tex2DUsage:
+    def __init__(self, array, components):
+        self.name = array.name
+        self.type = array.type
+        self.components = components
+
+    def tune_components(self, res, command):
+        self.components = "".join([self.components["xyzw".index(c)] for c in res.components])
+
+class _TexCubeUsage:
     def __init__(self, array, components):
         self.name = array.name
         self.type = array.type
@@ -518,17 +562,17 @@ def _parse_operands(operands, context):
 
         if operand[0] == 'r' and operand[1:].split('.')[0].isdigit():
             parsed.append(context.get_variable_by_reg(*operand.split('.'), wrappers))
-        elif operand.split('.')[0] in SHADER_INPUT_NAMES:
-            parsed.append(_ShaderInput(operand.split('.')[0], SHADER_INPUT_NAMES[operand.split('.')[0]], wrappers))
-        elif operand.split('.')[0] in context.external_inputs:
-            parsed.append(_ShaderInput(operand.split('.')[0], context.external_inputs[operand.split('.')[0]], wrappers))
+        elif operand.rsplit('.', 1)[0] in SHADER_INPUT_NAMES:
+            parsed.append(_ShaderInput(operand.rsplit('.', 1)[0], SHADER_INPUT_NAMES[operand.rsplit('.', 1)[0]], wrappers))
+        elif operand.rsplit('.', 1)[0] in context.external_inputs:
+            parsed.append(_ShaderInput(operand.rsplit('.', 1)[0], context.external_inputs[operand.rsplit('.', 1)[0]], wrappers))
         elif operand.split('.')[0] in context.internal_inputs:
             inp = context.internal_inputs[operand.split('.')[0]]
             components = operand.split('.')[1] if "." in operand else inp.get_components()
             parsed.append(inp.get_usage_class()(inp, components))
         elif operand.startswith("l("):
             parsed.append(_Constant(operand[2: -1]))
-        elif operand.startswith("cb"):
+        elif operand.startswith("cb") and "r" in operand:
             cb_idx = int(operand[2:operand.index("[")])
             variable = context.get_variable_by_reg(*operand[operand.index("[") + 1: operand.index("+")].split('.'), ("", ""))
             offset = int(operand[operand.index("+") + 1: operand.index("]")])
@@ -557,6 +601,10 @@ def process_inputs(inputs):
         inp = inp.strip(' ').split()
         if inp[0] == "dcl_resource_texture2darray":
             res[inp[2]] = _Tex2DArray(inp[2], type_names.index(inp[1][1:].split(',')[0]))
+        elif inp[0] == "dcl_resource_texture2d":
+            res[inp[2]] = _Tex2D(inp[2], type_names.index(inp[1][1:].split(',')[0]))
+        elif inp[0] == "dcl_resource_texturecube":
+            res[inp[2]] = _TexCube(inp[2], type_names.index(inp[1][1:].split(',')[0]))
         elif inp[0] == "dcl_resource_structured":
             res[inp[1]] = _SBuffer(inp[1], _UNKNOWN)
         elif inp[0] == "dcl_uav_raw":

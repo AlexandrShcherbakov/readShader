@@ -63,6 +63,7 @@ replace_table_operations = {
     "log": ("log({})", True),
     "sample_l(texturecube)(float,float,float,float)": ("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
     "mov_sat": ("saturate({})", True),
+    "initializer": ("", True),
 }
 
 arg_sizes = {
@@ -215,15 +216,21 @@ class _Context:
         self.internal_inputs = internal_inputs
         self.tabs = 0
         self.replacer = dict()
+        self.variables = dict()
 
-    def add_variable(self, reg, tp, const_value):
+    def add_variable(self, reg, tp, const_value, variable_name = None):
+        if variable_name in self.variables:
+            self.variables[variable_name].type = tp
+            return self.variables[variable_name]
         reg_name, components = reg.split('.')
-        variable_name = f"var_{self.variables_count}"
-        self.variables_count += 1
+        if variable_name is None:
+            variable_name = f"var_{self.variables_count}"
+            self.variables_count += 1
         var = _Variable(variable_name, reg_name, components, tp, const_value)
+        self.variables[variable_name] = var
         self.variables_map[self.stack[-1]].update({f"{reg_name}.{components[i]}": (variable_name, "xyzw"[i], var) for i in range(len(components))})
         return var
-    
+
     def get_variable_by_reg(self, reg, components, wrappers):
         in_other_scopes = []
         variables = []
@@ -244,8 +251,8 @@ class _Context:
                         var = self.variables_map[layer][key][2]
                         variables.append(self.variables_map[layer][key])
                         self.replacer[var.name] = [var]
-                        
-            
+
+
 
         if len({var_name for var_name, var_comp, var in variables}) == 1:
             return _VariableAccessor(variables[0][2], "".join([var_comp for var_name, var_comp, var in variables]), wrappers)
@@ -255,15 +262,15 @@ class _Context:
         self.stack.append(len(self.variables_map))
         self.variables_map.append(dict())
         self.tabs += 1
-    
+
     def switch_scope(self):
         self.stack[-1] = len(self.variables_map)
         self.variables_map.append(dict())
-    
+
     def exit_scope(self):
         self.stack = self.stack[:-1]
         self.tabs -= 1
-    
+
 
 def _tune_operands(res, command, operands):
     if command in special_res_components:
@@ -274,7 +281,7 @@ def _tune_operands(res, command, operands):
 
 
 class _ResStatement:
-    def __init__(self, command, res, operands, context, initialize=True):
+    def __init__(self, command, res, operands, context, initialize=True, variable_name=None):
         self.init_command = command
         self.command, self.inplace_without_brackets = replace_table_operations[command]
         # Parse operands
@@ -287,7 +294,7 @@ class _ResStatement:
             self.res = ShaderOutput(*res.split("."))
             initialize = False
         else:
-            self.res = context.add_variable(res, type_by_instr[command](self.operands), const_value)
+            self.res = context.add_variable(res, type_by_instr[command](self.operands), const_value, variable_name)
         # Tune operands
         _tune_operands(self.res, command, self.operands)
 
@@ -297,6 +304,8 @@ class _ResStatement:
 
     def __str__(self):
         prefix = self.res.get_type() + " " if self.initialize else ""
+        if len(self.command) == 0:
+            return f"{'  ' * self.tabs}{prefix}{self.res};"
         return f"{'  ' * self.tabs}{prefix}{self.res} = {self.command.format(*self.operands)};"
 
 
@@ -593,7 +602,11 @@ def dxil_transform(dxil, inputs, var_names):
             continue
         command = line.split(":")[1]
         dxil_lines.append(list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), command.split(' ')))))
-    return dxil_to_commands(input_lines, dxil_lines, inputs, var_names)
+    blocks = split_commands_on_blocks(dxil_lines)
+    add_reversed_links(blocks)
+    mark_initializers_in_blocks(blocks)
+    code, initializers, variable_names = regenerate_code_and_initializers(blocks)
+    return dxil_to_commands(input_lines, code, initializers, variable_names, inputs, var_names)
 
 def process_inputs(inputs):
     res = dict()
@@ -656,14 +669,14 @@ def reduce_lines_count(lines, var_usages):
     return lines
 
 
-def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
+def dxil_to_commands(input_lines, dxil_lines, initializers, variable_names, external_inputs, var_names):
     processed = []
     context = _Context(external_inputs, process_inputs(input_lines))
-    for command in dxil_lines:
+    for command, is_init, variable_name in zip(dxil_lines, initializers, variable_names):
         _squash_brackets_expression(command)
         # Classify command
         if command[0] in replace_table_operations:
-            processed.append(_ResStatement(command[0], command[1], command[2:], context))
+            processed.append(_ResStatement(command[0], command[1], command[2:], context, is_init, variable_name))
         elif command[0] in replace_table_operators:
             processed.append(_Statement(command[0], command[1:], context))
         elif command[0] in replace_table_special:
@@ -707,3 +720,133 @@ def dxil_to_commands(input_lines, dxil_lines, external_inputs, var_names):
             processed[i].res.name = var_names[processed[i].res.name]
 
     return "\n".join(list(map(str, processed)))
+
+
+class CodeBlock:
+    def __init__(self, layer, previous_blocks):
+        self.instructions = []
+        self.layer = layer
+        self.previous_blocks = previous_blocks
+        self.initializer = []
+        self.var_names = []
+
+    def add_instruction(self, instruction, init=None):
+        self.instructions.append(instruction)
+        self.initializer.append(init)
+        self.var_names.append("UNNAMED")
+
+    def __repr__(self):
+        return str(self.instructions)
+
+
+def split_commands_on_blocks(commands):
+    current_layer = 0
+    blocks = [CodeBlock(current_layer, [])]
+    FLOW_CONTROLLERS = { "if_nz": 1, "else": 0, "endif": -1 }
+    for command in commands:
+        blocks[-1].add_instruction(command)
+        if command[0] not in FLOW_CONTROLLERS:
+            continue
+        current_layer += FLOW_CONTROLLERS[command[0]]
+        if blocks[-1].layer == current_layer - 1:
+            previous_blocks = [len(blocks) - 1]
+        elif blocks[-1].layer == current_layer:
+            for idx in range(len(blocks) - 2, -1, -1):
+                if blocks[idx].layer == current_layer - 1:
+                    previous_blocks = [idx]
+                    break
+        elif blocks[-1].layer == current_layer + 1:
+            previous_blocks = []
+            for idx in range(len(blocks) - 2, -1, -1):
+                if blocks[idx].layer == blocks[-1].layer and blocks[idx + 1].layer == blocks[idx].layer:
+                    previous_blocks.append(idx)
+                    break
+            previous_blocks.append(len(blocks) - 1)
+        blocks.append(CodeBlock(current_layer, previous_blocks))
+    return blocks
+
+
+def add_reversed_links(blocks):
+    for block_id, block in enumerate(blocks):
+        block.next_blocks = []
+        for prev_block_id in block.previous_blocks:
+            blocks[prev_block_id].next_blocks.append(block_id)
+
+
+def create_context_for_block(blocks, block_start_id, register_name, register_components, var_name):
+    context = {block_start_id}
+    layer = {block_start_id}
+    next_layer = set()
+    register_components = set(register_components)
+    while len(layer):
+        context |= layer
+        for block_id in layer:
+            next_layer |= set(blocks[block_id].next_blocks)
+        if len(layer) == 1 and blocks[list(layer)[0]].layer == 0:
+            for statement_id, statement in enumerate(blocks[list(layer)[0]].instructions):
+                if statement[0] not in replace_table_operations:
+                    continue
+                target_register, target_components = statement[1].split(".", 1)
+                if target_register != register_name:
+                    continue
+                register_components = register_components - set(target_components)
+                if len(register_components):
+                    blocks[list(layer)[0]].initializer[statement_id] = False
+                    blocks[list(layer)[0]].var_names[statement_id] = var_name
+        if not len(register_components):
+            break
+        layer = next_layer
+        next_layer = set()
+    return context
+
+
+def find_parent_block(blocks, context):
+    for block_id in context:
+        if all([next_block_id not in context for next_block_id in blocks[block_id].next_blocks]):
+            break
+    current_layer = set(blocks[block_id].previous_blocks)
+    depth = min(blocks[block_id].layer for block_id in context)
+    while len(current_layer) != 1 and blocks[list(current_layer)[0]].layer != depth:
+        next_layer = set()
+        for idx in current_layer:
+            next_layer |= set(blocks[idx].previous_blocks)
+        current_layer = next_layer
+        next_layer = set()
+    return list(current_layer)[0]
+
+
+def mark_initializers_in_blocks(blocks):
+    variables_count = 0
+    for block_idx, block in enumerate(blocks):
+        for statement_idx, statement in enumerate(block.instructions):
+            if statement[0] not in replace_table_operations:
+                continue
+            if block.initializer[statement_idx] is not None:
+                continue
+            var_name = "var_" + str(variables_count)
+            variables_count += 1
+            block.var_names[statement_idx] = var_name
+            if block.layer == 0:
+                block.initializer[statement_idx] = True
+                continue
+            register, components = statement[1].split(".", 1)
+            context = create_context_for_block(blocks, block_idx, register, components, var_name)
+            parent_block = find_parent_block(blocks, context)
+            if parent_block == block_idx:
+                block.initializer[statement_idx] = True
+            else:
+                blocks[parent_block].instructions = [["initializer", statement[1]]] + blocks[parent_block].instructions
+                blocks[parent_block].initializer = [True] + blocks[parent_block].initializer
+                blocks[parent_block].var_names = [var_name] + blocks[parent_block].var_names
+                block.initializer[statement_idx] = False
+
+
+def regenerate_code_and_initializers(blocks):
+    code = []
+    initializers = []
+    var_names = []
+    for block in blocks:
+        code += block.instructions
+        initializers += block.initializer
+        var_names += block.var_names
+    return code, initializers, var_names

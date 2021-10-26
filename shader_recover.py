@@ -8,8 +8,8 @@ class VarAccessor:
     def __init__(self, tp, comps):
         self.single_var = True
         if isinstance(comps, str):
-            if comps.startswith("l(") or "." not in comps:
-                self.name = comps[2:-1] if comps.startswith("l(") else comps
+            if "." not in comps:
+                self.name = comps
                 if "," in comps:
                     self.name = tp + str(comps.count(",") + 1) + "(" + self.name + ")"
                 self.components = ""
@@ -93,7 +93,12 @@ class _AssignStatement:
             if res != result_name:
                 raise Exception(f"Result names don't match! {result_name} and {res}")
 
-        return f"{prefix}{result_name} = {self.instructions[self.instruction][0].format(*[VarAccessor(type_name, x)  for x in self.operands])};"
+        proccessed_operands = [
+            x if isinstance(x, _Constant) else VarAccessor(type_name, x)
+            for x in self.operands
+        ]
+
+        return f"{prefix}{result_name} = {self.instructions[self.instruction][0].format(*proccessed_operands)};"
 
 
 class _FlowControlStatement:
@@ -111,7 +116,12 @@ class _FlowControlStatement:
         self.operands = raw_tokens[1:]
 
     def __repr__(self):
-        return self.instructions[self.instruction].hlsl_instruction.format(*[VarAccessor("bool", x)  for x in self.operands])
+        proccessed_operands = [
+            x if isinstance(x, _Constant) else VarAccessor("bool", x)
+            for x in self.operands
+        ]
+
+        return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands)
     
     def get_depth(self):
         return self.instructions[self.instruction].depth_corrector
@@ -131,7 +141,11 @@ class _ModifierStatement:
         self.operands = raw_tokens[1:]
     
     def __repr__(self):
-        return self.instructions[self.instruction].hlsl_instruction.format(*[VarAccessor("bool", x)  for x in self.operands]) + ";"
+        proccessed_operands = [
+            x if isinstance(x, _Constant) else VarAccessor("bool", x)
+            for x in self.operands
+        ]
+        return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands) + ";"
 
 
 
@@ -328,8 +342,26 @@ class _VariablesContext:
             self.variables[var_name].init_pos = _find_parent_block(graph, self.variables[var_name].usages)
 
 
+class _Constant:
+    def __init__(self, token):
+        self.values = ", ".join(token[2:-1].split(","))
+        self.comp_len = 4 if "," in self.values else 1
+        self.type = float if "." in self.values else int
+
+    def __str__(self):
+        if self.comp_len == 1:
+            return self.values
+        return f"{self.type.__name__}{self.comp_len}({self.values})"
+
+
 def _substitute_operands(statement, pos, context):
+    def _is_const(operand):
+        return operand.startswith("l(")
+
     for operand_id, operand in enumerate(statement.operands):
+        if _is_const(operand):
+            statement.operands[operand_id] = _Constant(operand)
+            continue
         is_negative = operand[0] == "-"
         if is_negative:
             operand = operand[1:]
@@ -447,9 +479,8 @@ def _compute_result_type(statement, context, var_types):
     for operand in statement.operands:
         if isinstance(operand, list):
             operands_types.extend(context.variables[var_name].type_id for var_name, _, _ in operand)
-        elif isinstance(operand, str) and operand.startswith("l("):
-            operand = operand[2:-1]
-            operands_types.append(type_idx.index(float if "." in operand else int))
+        elif isinstance(operand, _Constant):
+            operands_types.append(type_idx.index(operand.type))
         else:
             operands_types.append(type_idx.index(var_types[_extract_register_name(operand)]))
     type_evaluators = collections.defaultdict(lambda:max,

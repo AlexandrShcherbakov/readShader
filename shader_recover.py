@@ -343,10 +343,19 @@ class _VariablesContext:
 
 
 class _Constant:
-    def __init__(self, token):
-        self.values = ", ".join(token[2:-1].split(","))
-        self.comp_len = 4 if "," in self.values else 1
-        self.type = float if "." in self.values else int
+    def __init__(self, values, comp_len, tp):
+        self.values = values
+        self.comp_len = comp_len
+        self.type = tp
+
+    @staticmethod
+    def try_to_parse(token, context):
+        if not token.startswith("l("):
+            return None
+        values = ", ".join(token[2:-1].split(","))
+        comp_len = 4 if "," in values else 1
+        tp = float if "." in values else int
+        return _Constant(values, comp_len, tp)
 
     def __str__(self):
         if self.comp_len == 1:
@@ -355,35 +364,35 @@ class _Constant:
 
 
 def _substitute_operands(statement, pos, context):
-    def _is_const(operand):
-        return operand.startswith("l(")
-
     for operand_id, operand in enumerate(statement.operands):
-        if _is_const(operand):
-            statement.operands[operand_id] = _Constant(operand)
-            continue
-        is_negative = operand[0] == "-"
-        if is_negative:
-            operand = operand[1:]
-        if not operand.startswith("r"):
-            continue
-        register, components = operand.split(".")
-        if not (register[0] == "r" and register[1:].isdigit()):
-            continue
-        var_usages = [None for _ in components]
-        for var_name, variable in context.variables.items():
-            if variable.register != register:
+        types_to_process = [_Constant]
+        for token_type in types_to_process:
+            if processed := token_type.try_to_parse(operand, context):
+                statement.operands[operand_id] = processed
+                break
+        else:
+            is_negative = operand[0] == "-"
+            if is_negative:
+                operand = operand[1:]
+            if not operand.startswith("r"):
                 continue
-            if (
-                pos[0] in variable.usages
-                and pos[1] in variable.usages[pos[0]]
-                and operand_id in variable.usages[pos[0]][pos[1]]
-            ):
-                for comp_idx, component in enumerate(components):
-                    if component not in variable.usages[pos[0]][pos[1]][operand_id]:
-                        continue
-                    var_usages[comp_idx] = (var_name, variable.get_var_comp(component), "-{}" if is_negative else "{}")
-        statement.operands[operand_id] = var_usages
+            register, components = operand.split(".")
+            if not (register[0] == "r" and register[1:].isdigit()):
+                continue
+            var_usages = [None for _ in components]
+            for var_name, variable in context.variables.items():
+                if variable.register != register:
+                    continue
+                if (
+                    pos[0] in variable.usages
+                    and pos[1] in variable.usages[pos[0]]
+                    and operand_id in variable.usages[pos[0]][pos[1]]
+                ):
+                    for comp_idx, component in enumerate(components):
+                        if component not in variable.usages[pos[0]][pos[1]][operand_id]:
+                            continue
+                        var_usages[comp_idx] = (var_name, variable.get_var_comp(component), "-{}" if is_negative else "{}")
+            statement.operands[operand_id] = var_usages
 
 
 def _substitute_result(statement, pos, context):
@@ -483,6 +492,10 @@ def _compute_result_type(statement, context, var_types):
             operands_types.append(type_idx.index(operand.type))
         else:
             operands_types.append(type_idx.index(var_types[_extract_register_name(operand)]))
+    if not all(x != 0 for x in operands_types):
+        for operand, type_op in zip(statement.operands, operands_types):
+            if type_op == 0:
+                print(f"{operand} doesn't have a type!")
     type_evaluators = collections.defaultdict(lambda:max,
         ftou=lambda x: type_idx.index(int),
         utof=lambda x: type_idx.index(float),
@@ -588,7 +601,7 @@ def recover(disasm: str, inputs) -> str:
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
     _replace_registers_with_variables(blocks, graph, inputs | _get_types_for_resources(header))
-    print(_gen_hlsl(blocks))
+    return _gen_hlsl(blocks)
     # Substitute common functions
     # Substitute one place variables
     # Replace variable names

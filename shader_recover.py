@@ -94,7 +94,7 @@ class _AssignStatement:
                 raise Exception(f"Result names don't match! {result_name} and {res}")
 
         proccessed_operands = [
-            x if isinstance(x, _Constant) else VarAccessor(type_name, x)
+            VarAccessor(type_name, x) if isinstance(x, (str, list)) else x
             for x in self.operands
         ]
 
@@ -117,7 +117,7 @@ class _FlowControlStatement:
 
     def __repr__(self):
         proccessed_operands = [
-            x if isinstance(x, _Constant) else VarAccessor("bool", x)
+            VarAccessor("bool", x) if isinstance(x, (str, list)) else x
             for x in self.operands
         ]
 
@@ -142,7 +142,7 @@ class _ModifierStatement:
     
     def __repr__(self):
         proccessed_operands = [
-            x if isinstance(x, _Constant) else VarAccessor("bool", x)
+            VarAccessor("bool", x) if isinstance(x, (str, list)) else x
             for x in self.operands
         ]
         return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands) + ";"
@@ -362,10 +362,33 @@ class _Constant:
             return self.values
         return f"{self.type.__name__}{self.comp_len}({self.values})"
 
+class _BuiltinConstant:
+    def __init__(self, name, components, tp):
+        self.name = name
+        self.components = components
+        self.type = tp
+
+    @staticmethod
+    def try_to_parse(token, context):
+        built_in_consts = {
+            "vThreadID": int
+        }
+        if "." not in token:
+            return None
+
+        name, components = token.split(".")
+        if name not in built_in_consts:
+            return None
+
+        return _BuiltinConstant(name, components, built_in_consts[name])
+
+    def __str__(self):
+        return f"{self.name}.{self.components}"
+
 
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
-        types_to_process = [_Constant]
+        types_to_process = [_Constant, _BuiltinConstant]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, context):
                 statement.operands[operand_id] = processed
@@ -488,10 +511,10 @@ def _compute_result_type(statement, context, var_types):
     for operand in statement.operands:
         if isinstance(operand, list):
             operands_types.extend(context.variables[var_name].type_id for var_name, _, _ in operand)
-        elif isinstance(operand, _Constant):
-            operands_types.append(type_idx.index(operand.type))
-        else:
+        elif isinstance(operand, str):
             operands_types.append(type_idx.index(var_types[_extract_register_name(operand)]))
+        else:
+            operands_types.append(type_idx.index(operand.type))
     if not all(x != 0 for x in operands_types):
         for operand, type_op in zip(statement.operands, operands_types):
             if type_op == 0:

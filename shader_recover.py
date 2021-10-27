@@ -312,9 +312,10 @@ class _Variable:
 
 
 class _VariablesContext:
-    def __init__(self):
+    def __init__(self, input_constants):
         self.variables = dict()
         self.vars_count = 0
+        self.input_constants = input_constants
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         var_name = f"var_{self.vars_count}"
@@ -386,9 +387,35 @@ class _BuiltinConstant:
         return f"{self.name}.{self.components}"
 
 
+class _InputConstant:
+    def __init__(self, name, components, tp, decorator):
+        self.name = name
+        self.components = components
+        self.type = tp
+        self.decorator = decorator
+
+    @staticmethod
+    def try_to_parse(token, context):
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+        if "." not in token:
+            return None
+
+        name, components = token.split(".")
+        if name not in context.input_constants:
+            return None
+
+        return _InputConstant(name, components, context.input_constants[name], decorator)
+
+    def __str__(self):
+        return self.decorator.format(f"{self.name}.{self.components}")
+
+
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
-        types_to_process = [_Constant, _BuiltinConstant]
+        types_to_process = [_Constant, _BuiltinConstant, _InputConstant]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, context):
                 statement.operands[operand_id] = processed
@@ -529,8 +556,8 @@ def _compute_result_type(statement, context, var_types):
     statement.type_id = context.variables[statement.result[0][0]].type_id = type_evaluators[statement.instruction](operands_types)
 
 
-def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], inputs):
-    variables_context = _VariablesContext()
+def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], inputs, input_constants):
+    variables_context = _VariablesContext(input_constants)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             if not isinstance(statement, _AssignStatement):
@@ -623,7 +650,7 @@ def recover(disasm: str, inputs) -> str:
     # Create a graph of blocks
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
-    _replace_registers_with_variables(blocks, graph, inputs | _get_types_for_resources(header))
+    _replace_registers_with_variables(blocks, graph, _get_types_for_resources(header), inputs)
     return _gen_hlsl(blocks)
     # Substitute common functions
     # Substitute one place variables

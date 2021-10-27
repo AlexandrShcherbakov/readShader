@@ -7,16 +7,6 @@ import typing
 class VarAccessor:
     def __init__(self, tp, comps):
         self.single_var = True
-        if isinstance(comps, str):
-            if "." not in comps:
-                self.name = comps
-                if "," in comps:
-                    self.name = tp + str(comps.count(",") + 1) + "(" + self.name + ")"
-                self.components = ""
-                self.single_var = False
-            else:
-                self.name, self.components = comps.split(".")
-            return
         self.name = comps[0][0]
         self.components = "".join(comp[1] for comp in comps)
         if any(x[0] != self.name for x in comps):
@@ -94,7 +84,7 @@ class _AssignStatement:
                 raise Exception(f"Result names don't match! {result_name} and {res}")
 
         proccessed_operands = [
-            VarAccessor(type_name, x) if isinstance(x, (str, list)) else x
+            VarAccessor(type_name, x) if isinstance(x, list) else x
             for x in self.operands
         ]
 
@@ -117,7 +107,7 @@ class _FlowControlStatement:
 
     def __repr__(self):
         proccessed_operands = [
-            VarAccessor("bool", x) if isinstance(x, (str, list)) else x
+            VarAccessor("bool", x) if isinstance(x, list) else x
             for x in self.operands
         ]
 
@@ -142,7 +132,7 @@ class _ModifierStatement:
     
     def __repr__(self):
         proccessed_operands = [
-            VarAccessor("bool", x) if isinstance(x, (str, list)) else x
+            VarAccessor("bool", x) if isinstance(x, list) else x
             for x in self.operands
         ]
         return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands) + ";"
@@ -312,10 +302,11 @@ class _Variable:
 
 
 class _VariablesContext:
-    def __init__(self, input_constants):
+    def __init__(self, input_constants, header):
         self.variables = dict()
         self.vars_count = 0
         self.input_constants = input_constants
+        self.input_resources = _get_types_for_resources(header)
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         var_name = f"var_{self.vars_count}"
@@ -412,10 +403,50 @@ class _InputConstant:
     def __str__(self):
         return self.decorator.format(f"{self.name}.{self.components}")
 
+class _InputResource:
+    def __init__(self, name, components, tp, decorator):
+        self.name = name
+        self.components = components
+        self.type = tp
+        self.decorator = decorator
+
+    @staticmethod
+    def try_to_parse(token, context):
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+        if "." not in token:
+            return None
+
+        name, components = token.split(".")
+        if name not in context.input_resources:
+            return None
+
+        return _InputResource(name, components, context.input_resources[name], decorator)
+
+    def __str__(self):
+        return self.decorator.format(f"{self.name}.{self.components}")
+
+class _OutputResource:
+    def __init__(self, name, tp):
+        self.name = name
+        self.type = tp
+
+    @staticmethod
+    def try_to_parse(token, context):
+        if token not in context.input_resources:
+            return None
+
+        return _OutputResource(token, context.input_resources[token])
+
+    def __str__(self):
+        return self.name
+
 
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
-        types_to_process = [_Constant, _BuiltinConstant, _InputConstant]
+        types_to_process = [_Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, context):
                 statement.operands[operand_id] = processed
@@ -533,13 +564,11 @@ def _extract_register_name(operand):
         operand = operand[1:]
     return operand.split(".")[0]
 
-def _compute_result_type(statement, context, var_types):
+def _compute_result_type(statement, context):
     operands_types = []
     for operand in statement.operands:
         if isinstance(operand, list):
             operands_types.extend(context.variables[var_name].type_id for var_name, _, _ in operand)
-        elif isinstance(operand, str):
-            operands_types.append(type_idx.index(var_types[_extract_register_name(operand)]))
         else:
             operands_types.append(type_idx.index(operand.type))
     if not all(x != 0 for x in operands_types):
@@ -556,8 +585,8 @@ def _compute_result_type(statement, context, var_types):
     statement.type_id = context.variables[statement.result[0][0]].type_id = type_evaluators[statement.instruction](operands_types)
 
 
-def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], inputs, input_constants):
-    variables_context = _VariablesContext(input_constants)
+def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], input_constants, header):
+    variables_context = _VariablesContext(input_constants, header)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             if not isinstance(statement, _AssignStatement):
@@ -570,7 +599,7 @@ def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_Graph
             if not isinstance(statement, _AssignStatement):
                 continue
             _substitute_result(statement, (block_id, statement_id), variables_context)
-            _compute_result_type(statement, variables_context, inputs)
+            _compute_result_type(statement, variables_context)
     for variable in variables_context.variables.values():
         if isinstance(variable.init_pos, tuple):
             blocks[variable.init_pos[0]].statements[variable.init_pos[1]].initializer = True
@@ -587,6 +616,8 @@ def _get_types_for_resources(header):
         "dcl_resource_texture2darray": (lambda x: (x[2], float if "float" in x[1] else int)),
         "dcl_input" : (lambda x: (x[1].split(".")[0], int)),
         "dcl_resource_structured": (lambda x: (x[1], None)),
+        "dcl_uav_raw": (lambda x: (x[1], int)),
+        "dcl_uav_structured": (lambda x: (x[1], float)),
     }
     for line in header:
         tokens = line.split()
@@ -650,7 +681,7 @@ def recover(disasm: str, inputs) -> str:
     # Create a graph of blocks
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
-    _replace_registers_with_variables(blocks, graph, _get_types_for_resources(header), inputs)
+    _replace_registers_with_variables(blocks, graph, inputs, header)
     return _gen_hlsl(blocks)
     # Substitute common functions
     # Substitute one place variables

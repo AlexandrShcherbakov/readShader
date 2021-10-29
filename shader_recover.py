@@ -1,3 +1,8 @@
+"""
+The only goal of this module is to restore HLSL code by DXIL disasm.
+Use recover method. It returns restored HLSL.
+"""
+
 import collections
 import copy
 import typing
@@ -5,12 +10,16 @@ import typing
 
 
 class VarAccessor:
+    """
+    This is a temp class which generates a string for viriables access.
+    TODO: Remove this class when variable accessor will be a type as _Constant
+    """
     def __init__(self, tp, comps):
         self.single_var = True
         self.name = comps[0][0]
         self.components = "".join(comp[1] for comp in comps)
         if any(x[0] != self.name for x in comps):
-            self.name = tp + str(len(comps)) + "(" + ", ".join(map(lambda x: f"{x[0]}.{x[1]}", comps)) + ")"
+            self.name = f"{tp}{len(comps)}({', '.join(map(lambda x: f'{x[0]}.{x[1]}', comps))})"
             self.components = ""
             self.single_var = False
 
@@ -21,7 +30,10 @@ class VarAccessor:
 
 
 class _AssignStatement:
-    SubstituteParams = collections.namedtuple("SubstituteParams", ["hlsl_instruction", "has_brackets"])
+    SubstituteParams = collections.namedtuple(
+        "SubstituteParams",
+        ["hlsl_instruction", "has_brackets"]
+    )
 
     instructions = {
         "utof": SubstituteParams("asfloat({})", True),
@@ -29,7 +41,8 @@ class _AssignStatement:
         "mad": SubstituteParams("{} * {} + {}", False),
         "ftou": SubstituteParams("asuint({})", True),
         "mov": SubstituteParams("{}", True),
-        "ld_indexable(texture2darray)(float,float,float,float)": SubstituteParams("{1.name}[{0}].{1.components}", True),
+        "ld_indexable(texture2darray)(float,float,float,float)":
+            SubstituteParams("{1.name}[{0}].{1.components}", True),
         "ftoi": SubstituteParams("asint({})", True),
         "ine": SubstituteParams("{} != {}", False),
         "ne": SubstituteParams("{} != {}", False),
@@ -41,7 +54,8 @@ class _AssignStatement:
         "movc": SubstituteParams("{} ? {} : {}", False),
         "div": SubstituteParams("{} / {}", True),
         "frc": SubstituteParams("frac({})", True),
-        "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)": SubstituteParams("{2.name}[{0} + {1}].{2.components}", True),
+        "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)":
+            SubstituteParams("{2.name}[{0} + {1}].{2.components}", True),
         "and": SubstituteParams("{} & {}", False),
         "add": SubstituteParams("{} + {}", False),
         "dp3": SubstituteParams("dot({}, {})", True),
@@ -59,11 +73,13 @@ class _AssignStatement:
         "ld_indexable": SubstituteParams("{1.name}[{0}].{1.components}", True),
         "ld_structured": SubstituteParams("{2.name}[{0} + {1}].{2.components}", True),
         "sample_l": SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
-        "sample_indexable(texture2d)(float,float,float,float)": SubstituteParams("{1.name}.Sample({2}, {0}).{1.components}", True),
+        "sample_indexable(texture2d)(float,float,float,float)":
+            SubstituteParams("{1.name}.Sample({2}, {0}).{1.components}", True),
         "mad_sat": SubstituteParams("saturate({} * {} + {})", True),
         "add_sat": SubstituteParams("saturate({} + {})", True),
         "log": SubstituteParams("log({})", True),
-        "sample_l(texturecube)(float,float,float,float)": SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
+        "sample_l(texturecube)(float,float,float,float)":
+            SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
         "mov_sat": SubstituteParams("saturate({})", True),
     }
 
@@ -74,6 +90,16 @@ class _AssignStatement:
         self.initializer = False
         self.type_id = -1
 
+    def get_computation(self):
+        """Get string of expression which we store in a variable"""
+        type_name = type_idx[self.type_id].__name__
+        proccessed_operands = [
+            VarAccessor(type_name, x) if isinstance(x, list) else x
+            for x in self.operands
+        ]
+
+        return self.instructions[self.instruction][0].format(*proccessed_operands)
+
     def __repr__(self):
         type_comps = str(len(self.result)) if len(self.result) > 1 else ""
         type_name = type_idx[self.type_id].__name__
@@ -83,16 +109,14 @@ class _AssignStatement:
             if res != result_name:
                 raise Exception(f"Result names don't match! {result_name} and {res}")
 
-        proccessed_operands = [
-            VarAccessor(type_name, x) if isinstance(x, list) else x
-            for x in self.operands
-        ]
-
-        return f"{prefix}{result_name} = {self.instructions[self.instruction][0].format(*proccessed_operands)};"
+        return f"{prefix}{result_name} = {self.get_computation()};"
 
 
 class _FlowControlStatement:
-    SubstituteParams = collections.namedtuple("SubstituteParams", ["hlsl_instruction", "depth_corrector"])
+    SubstituteParams = collections.namedtuple(
+        "SubstituteParams",
+        ["hlsl_instruction", "depth_corrector"]
+    )
 
     instructions = {
         "if_nz": SubstituteParams("if ({}) {{", 0),
@@ -112,8 +136,9 @@ class _FlowControlStatement:
         ]
 
         return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands)
-    
+
     def get_depth(self):
+        """Returns depth corrector for this instruction (used for else, endif)"""
         return self.instructions[self.instruction].depth_corrector
 
 
@@ -123,19 +148,21 @@ class _ModifierStatement:
     instructions = {
         "atomic_iadd": SubstituteParams("InterlockedAdd({0.name}[{1}], {2})"),
         "store_structured": SubstituteParams("{0.name}[{1} + {2}].{0.components} = {3}"),
-        "resinfo_indexable(texturecube)(float,float,float,float)_float": SubstituteParams("{2.name}.GetDimensions({1}, {0})"),
+        "resinfo_indexable(texturecube)(float,float,float,float)_float":
+            SubstituteParams("{2.name}.GetDimensions({1}, {0})"),
         "sincos": SubstituteParams("sincos({}, {}, {})"),
     }
     def __init__(self, raw_tokens: list[str]) -> None:
         self.instruction = raw_tokens[0]
         self.operands = raw_tokens[1:]
-    
+
     def __repr__(self):
         proccessed_operands = [
             VarAccessor("bool", x) if isinstance(x, list) else x
             for x in self.operands
         ]
-        return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands) + ";"
+        hlsl_inst = self.instructions[self.instruction].hlsl_instruction
+        return hlsl_inst.format(*proccessed_operands) + ";"
 
 
 
@@ -149,7 +176,7 @@ class _InitStatement:
         self.result = var_name
         self.type_id = tp
         self.size = size
-    
+
     def __repr__(self):
         type_comps = str(self.size) if self.size > 1 else ""
         return type_idx[self.type_id].__name__ + type_comps + " " + self.result.name + ";"
@@ -160,7 +187,7 @@ _Statement = typing.Union[_AssignStatement, _FlowControlStatement, _ModifierStat
 
 _STATEMENT_CLASSIFIER:dict[str, _Statement] = dict()
 for statement_type in [_AssignStatement, _FlowControlStatement, _ModifierStatement]:
-    for instruction in statement_type.instructions.keys():
+    for instruction in statement_type.instructions:
         _STATEMENT_CLASSIFIER[instruction] = statement_type
 
 
@@ -192,23 +219,25 @@ def _statement_str_to_tokens(raw_line: str) -> list[str]:
                 tokens[i] += sep + tokens[i + 1]
                 del tokens[i + 1]
             i -= 1
-    
+
     tokens = list(filter(lambda x: len(x) > 0, map(lambda x: x.strip(', '), raw_line.split(' '))))
     squash_brackets(tokens, "(", ")", ",")
     squash_brackets(tokens, "[", "]", "")
     return tokens
 
 
-def _split_commands_on_blocks(statements: list[_Statement]) -> tuple[list[_CodeBlock], list[list[int]]]:
+def _split_commands_on_blocks(
+    statements: list[_Statement]
+) -> tuple[list[_CodeBlock], list[list[int]]]:
     current_depth = 0
     blocks = [_CodeBlock([], current_depth)]
-    FLOW_CONTROLLERS = { "if_nz": 1, "else": 0, "endif": -1 }
+    flow_controllers = { "if_nz": 1, "else": 0, "endif": -1 }
     previous_block_links = [[]]
     for command in statements:
         blocks[-1].statements.append(command)
-        if command.instruction not in FLOW_CONTROLLERS:
+        if command.instruction not in flow_controllers:
             continue
-        current_depth += FLOW_CONTROLLERS[command.instruction]
+        current_depth += flow_controllers[command.instruction]
         if blocks[-1].depth == current_depth - 1:
             previous_blocks = [len(blocks) - 1]
         elif blocks[-1].depth == current_depth:
@@ -219,7 +248,10 @@ def _split_commands_on_blocks(statements: list[_Statement]) -> tuple[list[_CodeB
         elif blocks[-1].depth == current_depth + 1:
             previous_blocks = []
             for idx in range(len(blocks) - 2, -1, -1):
-                if blocks[idx].depth == blocks[-1].depth and blocks[idx + 1].depth == blocks[idx].depth:
+                if (
+                    blocks[idx].depth == blocks[-1].depth
+                    and blocks[idx + 1].depth == blocks[idx].depth
+                ):
                     previous_blocks.append(idx)
                     break
             previous_blocks.append(len(blocks) - 1)
@@ -258,12 +290,20 @@ def _gen_graph(prev_block_links:list[list[int]]) -> list[_GraphNode]:
 
 
 def _is_register(operand:str) -> bool:
-    return isinstance(operand, str) and operand.startswith("r") and operand[1:].split(".")[0].isdigit()
+    return (
+        isinstance(operand, str)
+        and operand.startswith("r")
+        and operand[1:].split(".")[0].isdigit()
+    )
 
 
 def _operand_uses_register(operand, register, components):
     operand = operand.strip("-")
-    return _is_register(operand) and operand.split(".")[0] == register and any(comp in components for comp in operand.split(".")[1])
+    return (
+        _is_register(operand)
+        and operand.split(".")[0] == register
+        and any(comp in components for comp in operand.split(".")[1])
+    )
 
 
 type_modifiers = {
@@ -298,6 +338,7 @@ class _Variable:
         self.type_id = -1
 
     def get_var_comp(self, component):
+        """Returns variable component by register component"""
         return "xyzw"[list(sorted(list(self.components))).index(component)]
 
 
@@ -310,31 +351,43 @@ class _VariablesContext:
         self.var_names = var_names
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
+        """Adds variable to context"""
         var_name = f"var_{self.vars_count}"
         if var_name in self.var_names:
             var_name = self.var_names[var_name]
         self.vars_count += 1
-        self.variables[var_name] = _Variable(var_name, register, components, usages, init_pos, mod_pos)
+        self.variables[var_name] = _Variable(
+            var_name, register, components, usages, init_pos, mod_pos
+        )
 
     def extend_var(self, var_name, usages, components, graph, modifier_pos):
+        """Extends variable usages list by merging"""
         self.variables[var_name].modifiers[modifier_pos] = components
         for block_id, block_us in usages.items():
             if block_id not in self.variables[var_name].usages:
                 self.variables[var_name].usages[block_id] = block_us
                 continue
             for statement_id, statement_us in block_us.items():
-                if statement_id not in self.variables[var_name].usages[block_id]:
-                    self.variables[var_name].usages[block_id][statement_id] = statement_us
+                statements = self.variables[var_name].usages[block_id]
+                if statement_id not in statements:
+                    statements[statement_id] = statement_us
                     continue
                 for operand_id, operand_us in statement_us.items():
-                    if operand_id not in self.variables[var_name].usages[block_id][statement_id]:
-                        self.variables[var_name].usages[block_id][statement_id][operand_id] = operand_us
+                    if operand_id not in statements[statement_id]:
+                        statements[statement_id][operand_id] = operand_us
                         continue
-                    self.variables[var_name].usages[block_id][statement_id][operand_id] |= operand_us
-        if not all(comp in self.variables[var_name].components for comp in components):
-            self.variables[var_name].components |= components
-            block_id = self.variables[var_name].init_pos[0] if isinstance(tuple, self.variables[var_name].init_pos) else self.variables[var_name].init_pos
-            self.variables[var_name].init_pos = _find_parent_block(graph, self.variables[var_name].usages)
+                    statements[statement_id][operand_id] |= operand_us
+        if all(comp in self.variables[var_name].components for comp in components):
+            return
+        self.variables[var_name].components |= components
+        block_id = (
+            self.variables[var_name].init_pos[0]
+            if isinstance(tuple, self.variables[var_name].init_pos)
+            else self.variables[var_name].init_pos
+        )
+        self.variables[var_name].init_pos = (
+            _find_parent_block(graph, self.variables[var_name].usages)
+        )
 
 
 class _Constant:
@@ -345,6 +398,7 @@ class _Constant:
 
     @staticmethod
     def try_to_parse(token, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
         if not token.startswith("l("):
             return None
         values = ", ".join(token[2:-1].split(","))
@@ -365,6 +419,7 @@ class _BuiltinConstant:
 
     @staticmethod
     def try_to_parse(token, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
         built_in_consts = {
             "vThreadID": int
         }
@@ -390,6 +445,7 @@ class _InputConstant:
 
     @staticmethod
     def try_to_parse(token, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
         decorator = "{}"
         if token[0] == "-":
             decorator = "-{}"
@@ -415,6 +471,7 @@ class _InputResource:
 
     @staticmethod
     def try_to_parse(token, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
         decorator = "{}"
         if token[0] == "-":
             decorator = "-{}"
@@ -438,6 +495,7 @@ class _OutputResource:
 
     @staticmethod
     def try_to_parse(token, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
         if token not in context.input_resources:
             return None
 
@@ -449,7 +507,9 @@ class _OutputResource:
 
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
-        types_to_process = [_Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource]
+        types_to_process = [
+            _Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource
+        ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, context):
                 statement.operands[operand_id] = processed
@@ -475,7 +535,11 @@ def _substitute_operands(statement, pos, context):
                     for comp_idx, component in enumerate(components):
                         if component not in variable.usages[pos[0]][pos[1]][operand_id]:
                             continue
-                        var_usages[comp_idx] = (var_name, variable.get_var_comp(component), "-{}" if is_negative else "{}")
+                        var_usages[comp_idx] = (
+                            var_name,
+                            variable.get_var_comp(component),
+                            "-{}" if is_negative else "{}"
+                        )
             statement.operands[operand_id] = var_usages
 
 
@@ -485,7 +549,7 @@ def _substitute_result(statement, pos, context):
     for var_name, variable in context.variables.items():
         if variable.register != register:
             continue
-        if (pos in variable.modifiers):
+        if pos in variable.modifiers:
             for comp_idx, component in enumerate(components):
                 if component not in variable.modifiers[pos]:
                     continue
@@ -495,7 +559,9 @@ def _substitute_result(statement, pos, context):
 
 def _find_usages_in_block(block, register, components, first_statement_id):
     usages = dict()
-    for statement_id, statement in enumerate(block.statements[first_statement_id:], first_statement_id):
+    for statement_id, statement in enumerate(
+        block.statements[first_statement_id:], first_statement_id
+    ):
         for operand_id, operand in enumerate(statement.operands):
             if _operand_uses_register(operand, register, components):
                 if statement_id not in usages:
@@ -513,9 +579,11 @@ def _find_usages_in_block(block, register, components, first_statement_id):
 def _find_usages(blocks, graph, context, statement_id, block_id, register, components):
     blocks_to_process = [(block_id, statement_id + 1, components)]
     final_usages = dict()
-    while len(blocks_to_process):
+    while len(blocks_to_process) > 0:
         block_id, start_statement, comps = blocks_to_process[0]
-        usages, comp_to_process = _find_usages_in_block(blocks[block_id], register, comps, start_statement)
+        usages, comp_to_process = _find_usages_in_block(
+            blocks[block_id], register, comps, start_statement
+        )
         if len(usages):
             final_usages[block_id] = usages
         if len(comp_to_process):
@@ -537,18 +605,28 @@ def _find_parent_block(graph, usages):
 def _add_variable(blocks, graph, context, statement_id, block_id):
     register, components = blocks[block_id].statements[statement_id].result.split(".")
     components = set(components)
-    current_usages = _find_usages(blocks, graph, context, statement_id, block_id, register, copy.copy(components))
+    current_usages = _find_usages(
+        blocks, graph, context, statement_id, block_id, register, copy.copy(components)
+    )
     vars_to_merge = set()
     for variable in context.variables.values():
-        if variable.register != register or not (components & variable.components):
+        if variable.register != register or not components & variable.components:
             continue
         mutual_blocks = set(variable.usages.keys()) & set(current_usages.keys())
         for block in mutual_blocks:
-            mutual_statements = set(variable.usages[block].keys()) & set(current_usages[block].keys())
+            mutual_statements = (
+                set(variable.usages[block].keys()) & set(current_usages[block].keys())
+            )
             for statement in mutual_statements:
-                mutual_operands = set(variable.usages[block][statement].keys()) & set(current_usages[block][statement].keys())
+                mutual_operands = (
+                    set(variable.usages[block][statement].keys())
+                    & set(current_usages[block][statement].keys())
+                )
                 for operand in mutual_operands:
-                    if len(variable.usages[block][statement][operand] & current_usages[block][statement][operand]):
+                    if len(
+                        variable.usages[block][statement][operand]
+                        & current_usages[block][statement][operand]
+                    ):
                         vars_to_merge.add(variable.name)
     if not vars_to_merge:
         init_pos = parent_block = _find_parent_block(graph, set(current_usages.keys()) | {block_id})
@@ -585,10 +663,17 @@ def _compute_result_type(statement, context):
         ine=lambda x: type_idx.index(bool),
         ge=lambda x: type_idx.index(bool),
     )
-    statement.type_id = context.variables[statement.result[0][0]].type_id = type_evaluators[statement.instruction](operands_types)
+    statement.type_id = type_evaluators[statement.instruction](operands_types)
+    context.variables[statement.result[0][0]].type_id = statement.type_id
 
 
-def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], input_constants, header, variable_names):
+def _replace_registers_with_variables(
+    blocks:list[_CodeBlock],
+    graph:list[_GraphNode],
+    input_constants,
+    header,
+    variable_names
+):
     variables_context = _VariablesContext(input_constants, header, variable_names)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
@@ -596,8 +681,8 @@ def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_Graph
                 continue
             _add_variable(blocks, graph, variables_context, statement_id, block_id)
 
-    
-    
+
+
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             _substitute_operands(statement, (block_id, statement_id), variables_context)
@@ -611,7 +696,9 @@ def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_Graph
 
     for variable in variables_context.variables.values():
         if not isinstance(variable.init_pos, tuple):
-            blocks[variable.init_pos].statements = [_InitStatement(variable, variable.type_id, len(variable.components))] + blocks[variable.init_pos].statements
+            blocks[variable.init_pos].statements = [
+                _InitStatement(variable, variable.type_id, len(variable.components))
+            ] + blocks[variable.init_pos].statements
 
 
 
@@ -652,7 +739,9 @@ def _remove_extra_components_for_statement(statement):
     def default_components_reducer(operands):
         return [single_operand_reductor(operand) for operand in operands]
     reducers = collections.defaultdict(lambda : default_components_reducer)
-    reducers["ld_indexable(texture2darray)(float,float,float,float)"] = lambda x: [components_count_setter(x[0], 3), single_operand_reductor(x[1])]
+    reducers["ld_indexable(texture2darray)(float,float,float,float)"] = lambda x: [
+        components_count_setter(x[0], 3), single_operand_reductor(x[1])
+    ]
     reducers["dp2"] = lambda x: [components_count_setter(x[0], 2), components_count_setter(x[1], 2)]
     reducers["dp3"] = lambda x: [components_count_setter(x[0], 3), components_count_setter(x[1], 3)]
     reducers["dp4"] = lambda x: [components_count_setter(x[0], 4), components_count_setter(x[1], 4)]
@@ -674,6 +763,7 @@ def _gen_hlsl(blocks):
     return hlsl
 
 def recover(disasm: str, inputs, variable_names) -> str:
+    """Main function, call it to recover HLSL"""
     # Filter statements
     header, raw_code = _filter_disasm_statements(disasm)
     # Split statement on tokens
@@ -690,16 +780,4 @@ def recover(disasm: str, inputs, variable_names) -> str:
     return _gen_hlsl(blocks)
     # Substitute common functions
     # Substitute one place variables
-    # Replace variable names
     # Return generated code
-
-
-if __name__ == "__main__":
-    with open("shaders/warhammer1.txt", "r") as fin:
-        disasm_code = fin.read()
-        inputs = {
-            "g_particle_instance_tex_width": int,
-            "g_emitter_instance_tex_width": int,
-            "vfx_camera_position": float
-        }
-        print(recover(disasm_code, inputs))

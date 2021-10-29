@@ -302,14 +302,17 @@ class _Variable:
 
 
 class _VariablesContext:
-    def __init__(self, input_constants, header):
+    def __init__(self, input_constants, header, var_names):
         self.variables = dict()
         self.vars_count = 0
         self.input_constants = input_constants
         self.input_resources = _get_types_for_resources(header)
+        self.var_names = var_names
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         var_name = f"var_{self.vars_count}"
+        if var_name in self.var_names:
+            var_name = self.var_names[var_name]
         self.vars_count += 1
         self.variables[var_name] = _Variable(var_name, register, components, usages, init_pos, mod_pos)
 
@@ -585,13 +588,15 @@ def _compute_result_type(statement, context):
     statement.type_id = context.variables[statement.result[0][0]].type_id = type_evaluators[statement.instruction](operands_types)
 
 
-def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], input_constants, header):
-    variables_context = _VariablesContext(input_constants, header)
+def _replace_registers_with_variables(blocks:list[_CodeBlock], graph:list[_GraphNode], input_constants, header, variable_names):
+    variables_context = _VariablesContext(input_constants, header, variable_names)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             if not isinstance(statement, _AssignStatement):
                 continue
             _add_variable(blocks, graph, variables_context, statement_id, block_id)
+
+    
     
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
@@ -668,7 +673,7 @@ def _gen_hlsl(blocks):
             hlsl += "  " * depth +  str(statement) + "\n"
     return hlsl
 
-def recover(disasm: str, inputs) -> str:
+def recover(disasm: str, inputs, variable_names) -> str:
     # Filter statements
     header, raw_code = _filter_disasm_statements(disasm)
     # Split statement on tokens
@@ -681,7 +686,7 @@ def recover(disasm: str, inputs) -> str:
     # Create a graph of blocks
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
-    _replace_registers_with_variables(blocks, graph, inputs, header)
+    _replace_registers_with_variables(blocks, graph, inputs, header, variable_names)
     return _gen_hlsl(blocks)
     # Substitute common functions
     # Substitute one place variables

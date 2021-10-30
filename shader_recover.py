@@ -232,7 +232,7 @@ def _split_commands_on_blocks(
     current_depth = 0
     blocks = [_CodeBlock([], current_depth)]
     flow_controllers = { "if_nz": 1, "else": 0, "endif": -1 }
-    previous_block_links = [[]]
+    previous_block_links : list[list[int]] = [[]] 
     for command in statements:
         blocks[-1].statements.append(command)
         if command.instruction not in flow_controllers:
@@ -304,11 +304,6 @@ def _operand_uses_register(operand, register, components):
         and operand.split(".")[0] == register
         and any(comp in components for comp in operand.split(".")[1])
     )
-
-
-type_modifiers = {
-
-}
 
 type_idx = [None, bool, int, float]
 

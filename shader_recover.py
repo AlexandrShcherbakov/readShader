@@ -196,7 +196,7 @@ def _split_commands_on_blocks(
     current_depth = 0
     blocks = [_CodeBlock([], current_depth)]
     flow_controllers = { "if_nz": 1, "else": 0, "endif": -1 }
-    previous_block_links : list[list[int]] = [[]] 
+    previous_block_links : list[list[int]] = [[]]
     for command in statements:
         blocks[-1].statements.append(command)
         if command.instruction not in flow_controllers:
@@ -466,6 +466,7 @@ class _OutputResource:
 
 class _VariableAccessor:
     class SingleCompAccessor:
+        """Class for access to one component of a variable."""
         def __init__(self, variable, component):
             self.variable = variable
             self.component = component
@@ -487,12 +488,12 @@ class _VariableAccessor:
             token = token[1:]
         if token[0] != "r" or not token[1:].split(".")[0].isdigit():
             return None
-        
+
         register, components = token.split(".")
 
         var_usages = [None for _ in components]
         var_type = 0
-        for var_name, variable in context.variables.items():
+        for variable in context.variables.values():
             if variable.register != register:
                 continue
             if (
@@ -504,7 +505,9 @@ class _VariableAccessor:
             for comp_idx, component in enumerate(components):
                 if component not in variable.usages[pos[0]][pos[1]][operand_id]:
                     continue
-                var_usages[comp_idx] = _VariableAccessor.SingleCompAccessor(variable, variable.get_var_comp(component))
+                var_usages[comp_idx] = _VariableAccessor.SingleCompAccessor(
+                    variable, variable.get_var_comp(component)
+                )
                 var_type = max(var_type, variable.type_id)
 
         return _VariableAccessor(var_usages, decorator, type_idx[var_type])
@@ -512,13 +515,19 @@ class _VariableAccessor:
     def __str__(self):
         if len(self.components) == 1:
             return str(self.components[0])
-        return f"{self.type.__name__}{len(self.components)}({', '.join(list(map(str, self.components)))})"
+        joined_components = ", ".join(list(map(str, self.components)))
+        return f"{self.type.__name__}{len(self.components)}({joined_components})"
 
 
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = [
-            _Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource, _VariableAccessor
+            _Constant,
+            _BuiltinConstant,
+            _InputConstant,
+            _InputResource,
+            _OutputResource,
+            _VariableAccessor
         ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, pos, operand_id, context):

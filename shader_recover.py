@@ -8,27 +8,6 @@ import copy
 import typing
 
 
-
-class VarAccessor:
-    """
-    This is a temp class which generates a string for viriables access.
-    TODO: Remove this class when variable accessor will be a type as _Constant
-    """
-    def __init__(self, tp, comps):
-        self.single_var = True
-        self.name = comps[0][0]
-        self.components = "".join(comp[1] for comp in comps)
-        if any(x[0] != self.name for x in comps):
-            self.name = f"{tp}{len(comps)}({', '.join(map(lambda x: f'{x[0]}.{x[1]}', comps))})"
-            self.components = ""
-            self.single_var = False
-
-    def __str__(self):
-        if self.single_var:
-            return self.name + "." + self.components
-        return self.name
-
-
 class _AssignStatement:
     SubstituteParams = collections.namedtuple(
         "SubstituteParams",
@@ -92,13 +71,7 @@ class _AssignStatement:
 
     def get_computation(self):
         """Get string of expression which we store in a variable"""
-        type_name = type_idx[self.type_id].__name__
-        proccessed_operands = [
-            VarAccessor(type_name, x) if isinstance(x, list) else x
-            for x in self.operands
-        ]
-
-        return self.instructions[self.instruction][0].format(*proccessed_operands)
+        return self.instructions[self.instruction][0].format(*self.operands)
 
     def __repr__(self):
         type_comps = str(len(self.result)) if len(self.result) > 1 else ""
@@ -130,12 +103,7 @@ class _FlowControlStatement:
         self.operands = raw_tokens[1:]
 
     def __repr__(self):
-        proccessed_operands = [
-            VarAccessor("bool", x) if isinstance(x, list) else x
-            for x in self.operands
-        ]
-
-        return self.instructions[self.instruction].hlsl_instruction.format(*proccessed_operands)
+        return self.instructions[self.instruction].hlsl_instruction.format(*self.operands)
 
     def get_depth(self):
         """Returns depth corrector for this instruction (used for else, endif)"""
@@ -157,12 +125,8 @@ class _ModifierStatement:
         self.operands = raw_tokens[1:]
 
     def __repr__(self):
-        proccessed_operands = [
-            VarAccessor("bool", x) if isinstance(x, list) else x
-            for x in self.operands
-        ]
         hlsl_inst = self.instructions[self.instruction].hlsl_instruction
-        return hlsl_inst.format(*proccessed_operands) + ";"
+        return hlsl_inst.format(*self.operands) + ";"
 
 
 
@@ -392,7 +356,7 @@ class _Constant:
         self.type = tp
 
     @staticmethod
-    def try_to_parse(token, context):
+    def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         if not token.startswith("l("):
             return None
@@ -413,7 +377,7 @@ class _BuiltinConstant:
         self.type = tp
 
     @staticmethod
-    def try_to_parse(token, context):
+    def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         built_in_consts = {
             "vThreadID": int
@@ -439,7 +403,7 @@ class _InputConstant:
         self.decorator = decorator
 
     @staticmethod
-    def try_to_parse(token, context):
+    def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         decorator = "{}"
         if token[0] == "-":
@@ -465,7 +429,7 @@ class _InputResource:
         self.decorator = decorator
 
     @staticmethod
-    def try_to_parse(token, context):
+    def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         decorator = "{}"
         if token[0] == "-":
@@ -489,7 +453,7 @@ class _OutputResource:
         self.type = tp
 
     @staticmethod
-    def try_to_parse(token, context):
+    def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         if token not in context.input_resources:
             return None
@@ -500,42 +464,68 @@ class _OutputResource:
         return self.name
 
 
+class _VariableAccessor:
+    class SingleCompAccessor:
+        def __init__(self, variable, component):
+            self.variable = variable
+            self.component = component
+
+        def __str__(self):
+            return f"{self.variable.name}.{self.component}"
+
+    def __init__(self, components : list[SingleCompAccessor], decorator, tp):
+        self.components = components
+        self.decorator = decorator
+        self.type = tp
+
+    @staticmethod
+    def try_to_parse(token, pos, operand_id, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+        if token[0] != "r" or not token[1:].split(".")[0].isdigit():
+            return None
+        
+        register, components = token.split(".")
+
+        var_usages = [None for _ in components]
+        var_type = 0
+        for var_name, variable in context.variables.items():
+            if variable.register != register:
+                continue
+            if (
+                pos[0] not in variable.usages
+                or pos[1] not in variable.usages[pos[0]]
+                or operand_id not in variable.usages[pos[0]][pos[1]]
+            ):
+                continue
+            for comp_idx, component in enumerate(components):
+                if component not in variable.usages[pos[0]][pos[1]][operand_id]:
+                    continue
+                var_usages[comp_idx] = _VariableAccessor.SingleCompAccessor(variable, variable.get_var_comp(component))
+                var_type = max(var_type, variable.type_id)
+
+        return _VariableAccessor(var_usages, decorator, type_idx[var_type])
+
+    def __str__(self):
+        if len(self.components) == 1:
+            return str(self.components[0])
+        return f"{self.type.__name__}{len(self.components)}({', '.join(list(map(str, self.components)))})"
+
+
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = [
-            _Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource
+            _Constant, _BuiltinConstant, _InputConstant, _InputResource, _OutputResource, _VariableAccessor
         ]
         for token_type in types_to_process:
-            if processed := token_type.try_to_parse(operand, context):
+            if processed := token_type.try_to_parse(operand, pos, operand_id, context):
                 statement.operands[operand_id] = processed
                 break
         else:
-            is_negative = operand[0] == "-"
-            if is_negative:
-                operand = operand[1:]
-            if not operand.startswith("r"):
-                continue
-            register, components = operand.split(".")
-            if not (register[0] == "r" and register[1:].isdigit()):
-                continue
-            var_usages = [None for _ in components]
-            for var_name, variable in context.variables.items():
-                if variable.register != register:
-                    continue
-                if (
-                    pos[0] in variable.usages
-                    and pos[1] in variable.usages[pos[0]]
-                    and operand_id in variable.usages[pos[0]][pos[1]]
-                ):
-                    for comp_idx, component in enumerate(components):
-                        if component not in variable.usages[pos[0]][pos[1]][operand_id]:
-                            continue
-                        var_usages[comp_idx] = (
-                            var_name,
-                            variable.get_var_comp(component),
-                            "-{}" if is_negative else "{}"
-                        )
-            statement.operands[operand_id] = var_usages
+            assert f"I don't know how to process token {operand}"
 
 
 def _substitute_result(statement, pos, context):

@@ -634,11 +634,6 @@ def _add_variable(blocks, graph, context, statement_id, block_id):
         print("Not implemented!")
 
 
-def _extract_register_name(operand):
-    if operand[0] == "-":
-        operand = operand[1:]
-    return operand.split(".")[0]
-
 def _compute_result_type(statement, context):
     operands_types = []
     for operand in statement.operands:
@@ -674,8 +669,6 @@ def _replace_registers_with_variables(
             if not isinstance(statement, _AssignStatement):
                 continue
             _add_variable(blocks, graph, variables_context, statement_id, block_id)
-
-
 
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):

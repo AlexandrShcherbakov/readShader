@@ -299,7 +299,7 @@ class _Variable:
 
     def get_var_comp(self, component):
         """Returns variable component by register component"""
-        return "xyzw"[list(sorted(list(self.components))).index(component)]
+        return "xyzw"[list(sorted(list(self.components), key=lambda x: "xyzw".index(x))).index(component)]
 
 
 class _VariablesContext:
@@ -361,8 +361,9 @@ class _Constant:
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
         if not token.startswith("l("):
             return None
-        values = ", ".join(token[2:-1].split(","))
-        comp_len = 4 if "," in values else 1
+        values = token[2:-1].split(",")
+        comp_len = len(values)
+        values = ", ".join(values)
         tp = float if "." in values else int
         return _Constant(values, comp_len, tp)
 
@@ -735,7 +736,12 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
-        if operand[0] == "l" or "." not in operand:
+        if operand[0] == "l":
+            components = operand[2:-1].split(",")
+            if len(components) == 1:
+                return operand
+            return "l(" + ",".join(map(lambda x: components["xyzw".index(x)], result_components)) + ")"
+        if "." not in operand:
             return operand
         reg, comps = operand.split(".")
         if len(result_components) == len(comps):

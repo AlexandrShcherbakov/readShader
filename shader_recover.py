@@ -60,6 +60,7 @@ class _AssignStatement:
         "sample_l(texturecube)(float,float,float,float)":
             SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
         "mov_sat": SubstituteParams("saturate({})", True),
+        "length": SubstituteParams("length({})", True)
     }
 
     def __init__(self, raw_tokens: list[str]) -> None:
@@ -474,6 +475,9 @@ class _VariableAccessor:
         def __str__(self):
             return f"{self.variable.name}.{self.component}"
 
+        def __eq__(self, another: object) -> bool:
+            return self.variable == another.variable and self.component == another.component
+
     def __init__(self, components : list[SingleCompAccessor], decorator, tp):
         self.components = components
         self.decorator = decorator
@@ -517,6 +521,18 @@ class _VariableAccessor:
             return str(self.components[0])
         joined_components = ", ".join(list(map(str, self.components)))
         return f"{self.type.__name__}{len(self.components)}({joined_components})"
+
+    def __eq__(self, another):
+        return (
+            self.decorator == self.decorator and
+            all(x == y for x, y in zip(self.components, another.components))
+        )
+
+    def whole_var_access(self, var):
+        for comp in self.components:
+            if comp.variable != var:
+                return False
+        return True
 
 
 def _substitute_operands(statement, pos, context):
@@ -749,6 +765,33 @@ def _gen_hlsl(blocks):
             hlsl += "  " * depth +  str(statement) + "\n"
     return hlsl
 
+
+def _substitute_common_functions(blocks):
+    for block in blocks:
+        replace_actions = []
+        for statement_id, statement in enumerate(block.statements):
+            if not isinstance(statement, _AssignStatement):
+                continue
+            if statement.instruction == "sqrt":
+                # Try to replace length
+                if (
+                    statement_id != 0
+                    and isinstance(block.statements[statement_id - 1], _AssignStatement)
+                    and block.statements[statement_id - 1].instruction == "dp3"
+                    and block.statements[statement_id - 1].operands[0] == block.statements[statement_id - 1].operands[1]
+                    and statement.operands[0].whole_var_access(block.statements[statement_id - 1].result[0][0])
+                ):
+                    replace_actions.append((
+                        [statement_id - 1, statement_id],
+                        _AssignStatement(["length", statement.result, block.statements[statement_id - 1].operands[0]])
+                    ))
+                    replace_actions[-1][1].initializer = statement.initializer
+        for action in reversed(replace_actions):
+            follow_actions = block.statements[max(action[0]) + 1:]
+            prev_actions = block.statements[:min(action[0])]
+            block.statements = prev_actions + [action[1]] + follow_actions
+
+
 def recover(disasm: str, inputs, variable_names) -> str:
     """Main function, call it to recover HLSL"""
     # Filter statements
@@ -764,7 +807,8 @@ def recover(disasm: str, inputs, variable_names) -> str:
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
     _replace_registers_with_variables(blocks, graph, inputs, header, variable_names)
-    return _gen_hlsl(blocks)
     # Substitute common functions
+    _substitute_common_functions(blocks)
     # Substitute one place variables
     # Return generated code
+    return _gen_hlsl(blocks)

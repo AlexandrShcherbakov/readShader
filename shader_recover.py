@@ -77,9 +77,9 @@ class _AssignStatement:
         type_comps = str(len(self.result)) if len(self.result) > 1 else ""
         type_name = type_idx[self.type_id].__name__
         prefix = (type_name + type_comps + " ") if self.initializer else ""
-        result_name = self.result[0][0]
+        result_name = self.result[0][0].name
         for res, _ in self.result:
-            if res != result_name:
+            if res.name != result_name:
                 raise Exception(f"Result names don't match! {result_name} and {res}")
 
         return f"{prefix}{result_name} = {self.get_computation()};"
@@ -540,14 +540,14 @@ def _substitute_operands(statement, pos, context):
 def _substitute_result(statement, pos, context):
     register, components = statement.result.split(".")
     var_usages = [None for _ in components]
-    for var_name, variable in context.variables.items():
+    for variable in context.variables.values():
         if variable.register != register:
             continue
         if pos in variable.modifiers:
             for comp_idx, component in enumerate(components):
                 if component not in variable.modifiers[pos]:
                     continue
-                var_usages[comp_idx] = (var_name, variable.get_var_comp(component))
+                var_usages[comp_idx] = (variable, variable.get_var_comp(component))
     statement.result = var_usages
 
 
@@ -653,7 +653,7 @@ def _compute_result_type(statement, context):
         ge=lambda x: type_idx.index(bool),
     )
     statement.type_id = type_evaluators[statement.instruction](operands_types)
-    context.variables[statement.result[0][0]].type_id = statement.type_id
+    context.variables[statement.result[0][0].name].type_id = statement.type_id
 
 
 def _replace_registers_with_variables(

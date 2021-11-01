@@ -519,6 +519,14 @@ class _VariableAccessor:
     def __str__(self):
         if len(self.components) == 1:
             return str(self.components[0])
+
+        one_var : bool = all(c.variable == self.components[0].variable for c in self.components)
+        if one_var:
+            var = self.components[0].variable
+            joined_components = "".join(list(map(lambda x: x.component, self.components)))
+            if joined_components == "xyzw"[:len(var.components)]:
+                return var.name
+            return f"{var.name}.{joined_components}"
         joined_components = ", ".join(list(map(str, self.components)))
         return f"{self.type.__name__}{len(self.components)}({joined_components})"
 

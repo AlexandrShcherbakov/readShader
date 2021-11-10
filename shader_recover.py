@@ -759,6 +759,9 @@ def _remove_extra_components_for_statement(statement):
     reducers["ld_indexable(texture2darray)(float,float,float,float)"] = lambda x: [
         components_count_setter(x[0], 3), single_operand_reductor(x[1])
     ]
+    reducers["ld_structured"] = lambda x: [
+        components_count_setter(x[0], 1), x[1],  single_operand_reductor(x[2])
+    ]
     reducers["dp2"] = lambda x: [components_count_setter(x[0], 2), components_count_setter(x[1], 2)]
     reducers["dp3"] = lambda x: [components_count_setter(x[0], 3), components_count_setter(x[1], 3)]
     reducers["dp4"] = lambda x: [components_count_setter(x[0], 4), components_count_setter(x[1], 4)]

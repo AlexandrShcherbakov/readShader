@@ -743,11 +743,15 @@ def _remove_extra_components_for_statement(statement):
             return "l(" + ",".join(map(lambda x: components["xyzw".index(x)], result_components)) + ")"
         if "." not in operand:
             return operand
+        decorator = "{}"
+        if operand.startswith("abs("):
+            decorator = "abs({})"
+            operand = operand[4:-1]
         reg, comps = operand.split(".")
         if len(result_components) == len(comps):
-            return operand
+            return decorator.format(operand)
         comps = "".join(map(lambda x: comps["xyzw".index(x)], result_components))
-        return f"{reg}.{comps}"
+        return decorator.format(f"{reg}.{comps}")
 
     def components_count_setter(operand, count):
         reg, comps = operand.split(".")

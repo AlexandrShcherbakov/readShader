@@ -263,6 +263,8 @@ def _is_register(operand:str) -> bool:
 
 
 def _operand_uses_register(operand, register, components):
+    if isinstance(operand, _Constant):
+        return False
     operand = operand.strip("-")
     return (
         _is_register(operand)
@@ -351,10 +353,14 @@ class _VariablesContext:
 
 
 class _Constant:
-    def __init__(self, values, comp_len, tp):
+    def __init__(self, values, tp):
         self.values = values
-        self.comp_len = comp_len
         self.type = tp
+
+    def remove_unused_components(self, result_comp):
+        if len(self.values) == len(result_comp):
+            return
+        self.values = list(map(lambda x: self.values["xyzw".index(x)], result_comp))
 
     @staticmethod
     def try_to_parse(token, pos, operand_id, context):
@@ -362,15 +368,13 @@ class _Constant:
         if not token.startswith("l("):
             return None
         values = token[2:-1].split(",")
-        comp_len = len(values)
-        values = ", ".join(values)
         tp = float if "." in values else int
-        return _Constant(values, comp_len, tp)
+        return _Constant(values, tp)
 
     def __str__(self):
-        if self.comp_len == 1:
-            return self.values
-        return f"{self.type.__name__}{self.comp_len}({self.values})"
+        if len(self.values) == 1:
+            return self.values[0]
+        return f"{self.type.__name__}{len(self.values)}({', '.join(self.values)})"
 
 class _BuiltinConstant:
     def __init__(self, name, components, tp):
@@ -546,14 +550,16 @@ class _VariableAccessor:
 
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
-        types_to_process = [
+        types_to_process = (
             _Constant,
             _BuiltinConstant,
             _InputConstant,
             _InputResource,
             _OutputResource,
             _VariableAccessor
-        ]
+        )
+        if isinstance(operand, types_to_process):
+            continue
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, pos, operand_id, context):
                 statement.operands[operand_id] = processed
@@ -736,6 +742,9 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
+        if isinstance(operand, _Constant):
+            operand.remove_unused_components(result_components)
+            return operand
         if operand[0] == "l":
             components = operand[2:-1].split(",")
             if len(components) == 1:
@@ -813,6 +822,25 @@ def _substitute_common_functions(blocks):
             block.statements = prev_actions + [action[1]] + follow_actions
 
 
+
+def _process_raw_tokens_in_statement(statement):
+    for operand_id, operand in enumerate(statement.operands):
+        types_to_process = [
+            _Constant
+        ]
+        for token_type in types_to_process:
+            if processed := token_type.try_to_parse(operand, None, operand_id, None):
+                statement.operands[operand_id] = processed
+                break
+        else:
+            assert f"I don't know how to process token {operand}"
+
+
+def _process_raw_tokens(statements):
+    for statement in statements:
+        _process_raw_tokens_in_statement(statement)
+
+
 def recover(disasm: str, inputs, variable_names) -> str:
     """Main function, call it to recover HLSL"""
     # Filter statements
@@ -821,6 +849,7 @@ def recover(disasm: str, inputs, variable_names) -> str:
     raw_tokens = [_statement_str_to_tokens(line) for line in raw_code]
     # Convert list of tokens to statement object
     statements = _build_statements(raw_tokens)
+    _process_raw_tokens(statements)
     _remove_extra_components(statements)
     # Split code on blocks
     blocks, previous_block_links = _split_commands_on_blocks(statements)

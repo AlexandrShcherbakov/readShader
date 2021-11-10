@@ -169,7 +169,7 @@ def _filter_disasm_statements(disasm: str) -> tuple[list[str], list[str]]:
     header = []
     statements = []
     for line in disasm.split("\n"):
-        if ":" in line:
+        if ":" in line and line.split(":")[0].strip().isdigit():
             statements.append(line.split(": ", 1)[1])
         elif line.strip().startswith("dcl_"):
             header.append(line.strip())

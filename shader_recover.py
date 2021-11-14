@@ -263,7 +263,7 @@ def _is_register(operand:str) -> bool:
 
 
 def _operand_uses_register(operand, register, components):
-    if isinstance(operand, _Constant):
+    if isinstance(operand, (_Constant, _BuiltinConstant)):
         return False
     operand = operand.strip("-")
     return (
@@ -381,6 +381,11 @@ class _BuiltinConstant:
         self.name = name
         self.components = components
         self.type = tp
+
+    def remove_unused_components(self, result_comp):
+        if len(result_comp) == len(self.components):
+            return
+        self.components = "".join(map(lambda x: self.components["xyzw".index(x)], result_comp))
 
     @staticmethod
     def try_to_parse(token, pos, operand_id, context):
@@ -742,14 +747,9 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
-        if isinstance(operand, _Constant):
+        if isinstance(operand, (_Constant, _BuiltinConstant)):
             operand.remove_unused_components(result_components)
             return operand
-        if operand[0] == "l":
-            components = operand[2:-1].split(",")
-            if len(components) == 1:
-                return operand
-            return "l(" + ",".join(map(lambda x: components["xyzw".index(x)], result_components)) + ")"
         if "." not in operand:
             return operand
         decorator = "{}"
@@ -826,7 +826,8 @@ def _substitute_common_functions(blocks):
 def _process_raw_tokens_in_statement(statement):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = [
-            _Constant
+            _Constant,
+            _BuiltinConstant
         ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, None, operand_id, None):

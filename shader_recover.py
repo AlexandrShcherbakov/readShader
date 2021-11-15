@@ -263,13 +263,10 @@ def _is_register(operand:str) -> bool:
 
 
 def _operand_uses_register(operand, register, components):
-    if isinstance(operand, (_Constant, _BuiltinConstant)):
-        return False
-    operand = operand.strip("-")
     return (
-        _is_register(operand)
-        and operand.split(".")[0] == register
-        and any(comp in components for comp in operand.split(".")[1])
+        isinstance(operand, _RegisterAccessor)
+        and operand.name == register
+        and any(comp in components for comp in operand.components)
     )
 
 type_idx = [None, bool, int, float]
@@ -344,7 +341,7 @@ class _VariablesContext:
         self.variables[var_name].components |= components
         block_id = (
             self.variables[var_name].init_pos[0]
-            if isinstance(tuple, self.variables[var_name].init_pos)
+            if isinstance(self.variables[var_name].init_pos, tuple)
             else self.variables[var_name].init_pos
         )
         self.variables[var_name].init_pos = (
@@ -393,7 +390,7 @@ class _BuiltinConstant:
         built_in_consts = {
             "vThreadID": int
         }
-        if "." not in token:
+        if token.count(".") != 1:
             return None
 
         name, components = token.split(".")
@@ -475,6 +472,103 @@ class _OutputResource:
         return self.name
 
 
+class _RegisterAccessor:
+    def __init__(self, name, components, decorator):
+        self.name = name
+        self.components = components
+        self.decorator = decorator
+    
+    def remove_unused_components(self, result_comp):
+        def remove_components(components):
+            if len(result_comp) == len(components):
+                return components
+            return "".join(map(lambda x: components["xyzw".index(x)], result_comp))
+        if "." in self.decorator:
+            decorator_begin, decorator_end = self.decorator.split(".")
+            self.decorator = f"{decorator_begin}.{remove_components(decorator_end)}"
+        else:
+            self.components = remove_components(self.components)
+
+    def set_components_count(self, count):
+        self.components = self.components[:count]
+
+    @staticmethod
+    def try_to_parse(token, pos, operand_id, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+        
+        if "." not in token:
+            return None
+
+        if token.startswith("abs("):
+            decorator = f"abs({decorator})"
+            token = token[4:-1]
+
+        if token.startswith("cb"):
+            cb_name, token = token.split("[")
+            register, token = token.split("+")
+            offset, components = token.split("]")
+            decorator = f"{cb_name}[{decorator} + {offset}]{components}"
+            token = register
+
+        name, comps = token.split(".")
+        if name[0] != "r" or not name[1:].isdigit():
+            return None
+        return _RegisterAccessor(name, comps, decorator)
+
+    def __str__(self):
+        return self.decorator.format(f"{self.name}.{self.components}")
+
+class _InputAttributeAccessor:
+    def __init__(self, name, components, decorator):
+        self.name = name
+        self.components = components
+        self.decorator = decorator
+        self.type = float
+    
+    def remove_unused_components(self, result_comp):
+        def remove_components(components):
+            if len(result_comp) == len(components):
+                return components
+            return "".join(map(lambda x: components["xyzw".index(x)], result_comp))
+        if "." in self.decorator:
+            decorator_begin, decorator_end = self.decorator.split(".")
+            self.decorator = f"{decorator_begin}.{remove_components(decorator_end)}"
+        else:
+            self.components = remove_components(self.components)
+
+    def set_components_count(self, count):
+        self.components = self.components[:count]
+
+    @staticmethod
+    def try_to_parse(token, pos, operand_id, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+        
+        if "." not in token:
+            return None
+
+        if token.startswith("cb"):
+            cb_name, token = token.split("[")
+            register, token = token.split("+")
+            offset, components = token.split("]")
+            decorator = f"{cb_name}[{decorator} + {offset}]{components}"
+            token = register
+
+        name, comps = token.split(".")
+        if name[0] != "v" or not name[1:].isdigit():
+            return None
+        return _InputAttributeAccessor(name, comps, decorator)
+
+    def __str__(self):
+        return self.decorator.format(f"{self.name}.{self.components}")
+
 class _VariableAccessor:
     class SingleCompAccessor:
         """Class for access to one component of a variable."""
@@ -496,19 +590,13 @@ class _VariableAccessor:
     @staticmethod
     def try_to_parse(token, pos, operand_id, context):
         """Returns None if can't parse token with current type. Otherwise creates class instance"""
-        decorator = "{}"
-        if token[0] == "-":
-            decorator = "-{}"
-            token = token[1:]
-        if token[0] != "r" or not token[1:].split(".")[0].isdigit():
+        if not isinstance(token, _RegisterAccessor):
             return None
 
-        register, components = token.split(".")
-
-        var_usages = [None for _ in components]
+        var_usages = [None for _ in token.components]
         var_type = 0
         for variable in context.variables.values():
-            if variable.register != register:
+            if variable.register != token.name:
                 continue
             if (
                 pos[0] not in variable.usages
@@ -516,7 +604,7 @@ class _VariableAccessor:
                 or operand_id not in variable.usages[pos[0]][pos[1]]
             ):
                 continue
-            for comp_idx, component in enumerate(components):
+            for comp_idx, component in enumerate(token.components):
                 if component not in variable.usages[pos[0]][pos[1]][operand_id]:
                     continue
                 var_usages[comp_idx] = _VariableAccessor.SingleCompAccessor(
@@ -524,7 +612,7 @@ class _VariableAccessor:
                 )
                 var_type = max(var_type, variable.type_id)
 
-        return _VariableAccessor(var_usages, decorator, type_idx[var_type])
+        return _VariableAccessor(var_usages, token.decorator, type_idx[var_type])
 
     def __str__(self):
         if len(self.components) == 1:
@@ -561,9 +649,13 @@ def _substitute_operands(statement, pos, context):
             _InputConstant,
             _InputResource,
             _OutputResource,
-            _VariableAccessor
+            _VariableAccessor,
+            _InputAttributeAccessor
         )
         if isinstance(operand, types_to_process):
+            continue
+        if isinstance(operand, _RegisterAccessor):
+            statement.operands[operand_id] = _VariableAccessor.try_to_parse(operand, pos, operand_id, context)
             continue
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, pos, operand_id, context):
@@ -624,7 +716,7 @@ def _find_usages(blocks, graph, context, statement_id, block_id, register, compo
 
 
 def _find_parent_block(graph, usages):
-    front = usages
+    front = usages if isinstance(usages, set) else set(usages.keys())
     while len(front) > 1:
         last_block = max(front)
         front.remove(last_block)
@@ -676,6 +768,8 @@ def _compute_result_type(statement, context):
         if isinstance(operand, list):
             operands_types.extend(context.variables[var_name].type_id for var_name, _, _ in operand)
         else:
+            if isinstance(operand, str):
+                print(operand, "wasn't processed!")
             operands_types.append(type_idx.index(operand.type))
     if not all(x != 0 for x in operands_types):
         for operand, type_op in zip(statement.operands, operands_types):
@@ -729,10 +823,12 @@ def _get_types_for_resources(header):
     resource_types = dict()
     type_casters = {
         "dcl_resource_texture2darray": (lambda x: (x[2], float if "float" in x[1] else int)),
+        "dcl_resource_texture3d": (lambda x: (x[2], float if "float" in x[1] else int)),
         "dcl_input" : (lambda x: (x[1].split(".")[0], int)),
         "dcl_resource_structured": (lambda x: (x[1], None)),
         "dcl_uav_raw": (lambda x: (x[1], int)),
         "dcl_uav_structured": (lambda x: (x[1], float)),
+        "dcl_constantbuffer": (lambda x: (x[1], float)),
     }
     for line in header:
         tokens = line.split()
@@ -747,7 +843,7 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
-        if isinstance(operand, (_Constant, _BuiltinConstant)):
+        if isinstance(operand, (_Constant, _BuiltinConstant, _RegisterAccessor, _InputAttributeAccessor)):
             operand.remove_unused_components(result_components)
             return operand
         if "." not in operand:
@@ -763,8 +859,8 @@ def _remove_extra_components_for_statement(statement):
         return decorator.format(f"{reg}.{comps}")
 
     def components_count_setter(operand, count):
-        reg, comps = operand.split(".")
-        return f"{reg}.{comps[:count]}"
+        operand.set_components_count(count)
+        return operand
 
     def default_components_reducer(operands):
         return [single_operand_reductor(operand) for operand in operands]
@@ -774,6 +870,9 @@ def _remove_extra_components_for_statement(statement):
     ]
     reducers["ld_structured"] = lambda x: [
         components_count_setter(x[0], 1), x[1],  single_operand_reductor(x[2])
+    ]
+    reducers["sample_l"] = lambda x: [
+        components_count_setter(x[0], 3), single_operand_reductor(x[1]), x[2], x[3],
     ]
     reducers["dp2"] = lambda x: [components_count_setter(x[0], 2), components_count_setter(x[1], 2)]
     reducers["dp3"] = lambda x: [components_count_setter(x[0], 3), components_count_setter(x[1], 3)]
@@ -827,7 +926,9 @@ def _process_raw_tokens_in_statement(statement):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = [
             _Constant,
-            _BuiltinConstant
+            _BuiltinConstant,
+            _RegisterAccessor,
+            _InputAttributeAccessor
         ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, None, operand_id, None):

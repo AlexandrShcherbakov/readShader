@@ -507,8 +507,10 @@ class _RegisterAccessor:
             decorator = f"abs({decorator})"
             token = token[4:-1]
 
-        if token.startswith("cb"):
+        if "[" in token:
             cb_name, token = token.split("[")
+            if cb_name not in context.dyn_indexed_const_buffers:
+                return None
             register, token = token.split("+")
             offset, components = token.split("]")
             decorator = f"{cb_name}[{decorator} + {offset}]{components}"
@@ -554,8 +556,10 @@ class _InputAttributeAccessor:
         if "." not in token:
             return None
 
-        if token.startswith("cb"):
+        if "[" in token:
             cb_name, token = token.split("[")
+            if cb_name not in context.dyn_indexed_const_buffers:
+                return None
             register, token = token.split("+")
             offset, components = token.split("]")
             decorator = f"{cb_name}[{decorator} + {offset}]{components}"
@@ -922,7 +926,7 @@ def _substitute_common_functions(blocks):
 
 
 
-def _process_raw_tokens_in_statement(statement):
+def _process_raw_tokens_in_statement(statement, context):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = [
             _Constant,
@@ -931,16 +935,31 @@ def _process_raw_tokens_in_statement(statement):
             _InputAttributeAccessor
         ]
         for token_type in types_to_process:
-            if processed := token_type.try_to_parse(operand, None, operand_id, None):
+            if processed := token_type.try_to_parse(operand, None, operand_id, context):
                 statement.operands[operand_id] = processed
                 break
         else:
             assert f"I don't know how to process token {operand}"
 
 
-def _process_raw_tokens(statements):
+def _process_raw_tokens(statements, context):
     for statement in statements:
-        _process_raw_tokens_in_statement(statement)
+        _process_raw_tokens_in_statement(statement, context)
+
+
+class _ShaderContext:
+    def __init__(self, header):
+        self.not_processed = []
+        self.dyn_indexed_const_buffers = set()
+        for line in header:
+            tokens = line.split()
+            if tokens[0] == "dcl_constantbuffer" and tokens[2] == "dynamicIndexed":
+                self.dyn_indexed_const_buffers.add(tokens[1].split("[")[0])
+                continue
+            else:
+                print(f"{line} wasn't processed on primary header parsing")
+                self.not_processed.append(line)
+        self.not_processed
 
 
 def recover(disasm: str, inputs, variable_names) -> str:
@@ -951,14 +970,15 @@ def recover(disasm: str, inputs, variable_names) -> str:
     raw_tokens = [_statement_str_to_tokens(line) for line in raw_code]
     # Convert list of tokens to statement object
     statements = _build_statements(raw_tokens)
-    _process_raw_tokens(statements)
+    context = _ShaderContext(header)
+    _process_raw_tokens(statements, context)
     _remove_extra_components(statements)
     # Split code on blocks
     blocks, previous_block_links = _split_commands_on_blocks(statements)
     # Create a graph of blocks
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
-    _replace_registers_with_variables(blocks, graph, inputs, header, variable_names)
+    _replace_registers_with_variables(blocks, graph, inputs, context.not_processed, variable_names)
     # Substitute common functions
     _substitute_common_functions(blocks)
     # Substitute one place variables

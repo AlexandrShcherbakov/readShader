@@ -812,6 +812,8 @@ def _compute_result_type(statement, context):
         ine=lambda x: type_idx.index(bool),
         ge=lambda x: type_idx.index(bool),
     )
+    if len(operands_types) == 0:
+        print(f"Result type for {statement} is unknown.")
     statement.type_id = type_evaluators[statement.instruction](operands_types)
     context.variables[statement.result[0][0].name].type_id = statement.type_id
 

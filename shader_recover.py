@@ -616,6 +616,8 @@ class _VariableAccessor:
                 )
                 var_type = max(var_type, variable.type_id)
 
+        if any(value is None for value in var_usages):
+            assert 0, f"{token} wasn't processed correctly!"
         return _VariableAccessor(var_usages, token.decorator, type_idx[var_type])
 
     def __str__(self):
@@ -645,6 +647,23 @@ class _VariableAccessor:
         return True
 
 
+class _Sampler:
+    def __init__(self, name):
+        self.name = name
+
+    @staticmethod
+    def try_to_parse(token, pos, operand_id, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
+
+        if token not in context.samplers:
+            return None
+
+        return _Sampler(token)
+
+    def __str__(self):
+        return self.name
+
+
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = (
@@ -654,7 +673,8 @@ def _substitute_operands(statement, pos, context):
             _InputResource,
             _OutputResource,
             _VariableAccessor,
-            _InputAttributeAccessor
+            _InputAttributeAccessor,
+            _Sampler
         )
         if isinstance(operand, types_to_process):
             continue
@@ -770,14 +790,18 @@ def _compute_result_type(statement, context):
     operands_types = []
     for operand in statement.operands:
         if isinstance(operand, list):
+            if any(context.variables[var_name].type_id for var_name, _, _ in operand):
+                print(f"Not all components of {operand} have a type!")
             operands_types.extend(context.variables[var_name].type_id for var_name, _, _ in operand)
+        elif isinstance(operand, _Sampler):
+            continue
         else:
             if isinstance(operand, str):
                 print(operand, "wasn't processed!")
-            operands_types.append(type_idx.index(operand.type))
-    if not all(x != 0 for x in operands_types):
-        for operand, type_op in zip(statement.operands, operands_types):
-            if type_op == 0:
+                continue
+            if tp := type_idx.index(operand.type):
+                operands_types.append(type_idx.index(operand.type))
+            else:
                 print(f"{operand} doesn't have a type!")
     type_evaluators = collections.defaultdict(lambda:max,
         ftou=lambda x: type_idx.index(int),
@@ -932,7 +956,8 @@ def _process_raw_tokens_in_statement(statement, context):
             _Constant,
             _BuiltinConstant,
             _RegisterAccessor,
-            _InputAttributeAccessor
+            _InputAttributeAccessor,
+            _Sampler
         ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, None, operand_id, context):
@@ -951,11 +976,13 @@ class _ShaderContext:
     def __init__(self, header):
         self.not_processed = []
         self.dyn_indexed_const_buffers = set()
+        self.samplers = set()
         for line in header:
             tokens = line.split()
             if tokens[0] == "dcl_constantbuffer" and tokens[2] == "dynamicIndexed":
                 self.dyn_indexed_const_buffers.add(tokens[1].split("[")[0])
-                continue
+            elif tokens[0] == "dcl_sampler":
+                self.samplers.add(tokens[1])
             else:
                 print(f"{line} wasn't processed on primary header parsing")
                 self.not_processed.append(line)

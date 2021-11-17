@@ -308,6 +308,7 @@ class _VariablesContext:
         self.input_constants = input_constants
         self.input_resources = _get_types_for_resources(header)
         self.var_names = var_names
+        self.samplers = {} # Workaround
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         """Adds variable to context"""
@@ -704,22 +705,23 @@ def _substitute_result(statement, pos, context):
 
 
 def _find_usages_in_block(block, register, components, first_statement_id):
+    comps_to_process = copy.copy(components)
     usages = dict()
     for statement_id, statement in enumerate(
         block.statements[first_statement_id:], first_statement_id
     ):
         for operand_id, operand in enumerate(statement.operands):
-            if _operand_uses_register(operand, register, components):
+            if _operand_uses_register(operand, register, comps_to_process):
                 if statement_id not in usages:
                     usages[statement_id] = dict()
-                usages[statement_id][operand_id] = copy.copy(components)
+                usages[statement_id][operand_id] = copy.copy(comps_to_process)
         if not isinstance(statement, _AssignStatement):
             continue
         target_reg, target_comp = statement.result.split(".")
         if target_reg != register:
             continue
-        components -= set(target_comp)
-    return usages, components
+        comps_to_process -= set(target_comp)
+    return usages, comps_to_process
 
 
 def _find_usages(blocks, graph, context, statement_id, block_id, register, components):

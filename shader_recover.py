@@ -75,13 +75,17 @@ class _AssignStatement:
         return self.instructions[self.instruction][0].format(*self.operands)
 
     def __repr__(self):
-        type_comps = str(len(self.result)) if len(self.result) > 1 else ""
-        type_name = type_idx[self.type_id].__name__
-        prefix = (type_name + type_comps + " ") if self.initializer else ""
-        result_name = self.result[0][0].name
-        for res, _ in self.result:
-            if res.name != result_name:
-                raise Exception(f"Result names don't match! {result_name} and {res}")
+        prefix = ""
+        if not isinstance(self.result, _OutputAttributeAccessor):
+            type_comps = str(len(self.result)) if len(self.result) > 1 else ""
+            type_name = type_idx[self.type_id].__name__
+            prefix = (type_name + type_comps + " ") if self.initializer else ""
+            result_name = self.result[0][0].name
+            for res, _ in self.result:
+                if res.name != result_name:
+                    raise Exception(f"Result names don't match! {result_name} and {res}")
+        else:
+            result_name = self.result
 
         return f"{prefix}{result_name} = {self.get_computation()};"
 
@@ -575,6 +579,16 @@ class _InputAttributeAccessor:
     def __str__(self):
         return self.decorator.format(f"{self.name}.{self.components}")
 
+
+class _OutputAttributeAccessor:
+    def __init__(self, name, components):
+        self.name = name
+        self.components = components
+
+    def __str__(self):
+        return f"{self.name}.{self.components}"
+
+
 class _VariableAccessor:
     class SingleCompAccessor:
         """Class for access to one component of a variable."""
@@ -716,7 +730,7 @@ def _find_usages_in_block(block, register, components, first_statement_id):
                 if statement_id not in usages:
                     usages[statement_id] = dict()
                 usages[statement_id][operand_id] = copy.copy(comps_to_process)
-        if not isinstance(statement, _AssignStatement):
+        if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
             continue
         target_reg, target_comp = statement.result.split(".")
         if target_reg != register:
@@ -829,14 +843,14 @@ def _replace_registers_with_variables(
     variables_context = _VariablesContext(input_constants, header, variable_names)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
-            if not isinstance(statement, _AssignStatement):
+            if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
                 continue
             _add_variable(blocks, graph, variables_context, statement_id, block_id)
 
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             _substitute_operands(statement, (block_id, statement_id), variables_context)
-            if not isinstance(statement, _AssignStatement):
+            if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
                 continue
             _substitute_result(statement, (block_id, statement_id), variables_context)
             _compute_result_type(statement, variables_context)
@@ -982,12 +996,17 @@ class _ShaderContext:
         "InputAttribute",
         ["name", "components"]
     )
+    OutputAttribute = collections.namedtuple(
+        "OutputAttribute",
+        ["name", "components"]
+    )
 
     def __init__(self, header):
         self.not_processed = []
         self.dyn_indexed_const_buffers = set()
         self.samplers = set()
         self.input_attributes = dict()
+        self.output_attributes = dict()
         for line in header:
             tokens = line.split()
             if tokens[0] == "dcl_constantbuffer" and tokens[2] == "dynamicIndexed":
@@ -1000,10 +1019,24 @@ class _ShaderContext:
                 if len(tokens) == 3:
                     var_name = tokens[2]
                 self.input_attributes[name] = self.InputAttribute(var_name, components)
+            elif tokens[0] == "dcl_output":
+                name, components = tokens[1].split(".")
+                self.output_attributes[name] = self.OutputAttribute(name, components)
             else:
                 print(f"{line} wasn't processed on primary header parsing")
                 self.not_processed.append(line)
         self.not_processed
+
+
+def _substitute_output_attributes(blocks, context):
+    for block in blocks:
+        for statement in block.statements:
+            if not isinstance(statement, _AssignStatement):
+                continue
+            name, components = statement.result.split(".")
+            if name not in context.output_attributes:
+                continue
+            statement.result = _OutputAttributeAccessor(name, components)
 
 
 def recover(disasm: str, inputs, variable_names) -> str:
@@ -1022,6 +1055,7 @@ def recover(disasm: str, inputs, variable_names) -> str:
     # Create a graph of blocks
     graph = _gen_graph(previous_block_links)
     # Replace registers with variables
+    _substitute_output_attributes(blocks, context)
     _replace_registers_with_variables(blocks, graph, inputs, context.not_processed, variable_names)
     # Substitute common functions
     _substitute_common_functions(blocks)

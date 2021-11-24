@@ -309,6 +309,7 @@ class _VariablesContext:
         self.input_resources = _get_types_for_resources(header)
         self.var_names = var_names
         self.samplers = {} # Workaround
+        self.input_attributes = {} # Workaround
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         """Adds variable to context"""
@@ -567,9 +568,9 @@ class _InputAttributeAccessor:
             token = register
 
         name, comps = token.split(".")
-        if name[0] != "v" or not name[1:].isdigit():
+        if name not in context.input_attributes:
             return None
-        return _InputAttributeAccessor(name, comps, decorator)
+        return _InputAttributeAccessor(context.input_attributes[name].name, comps, decorator)
 
     def __str__(self):
         return self.decorator.format(f"{self.name}.{self.components}")
@@ -977,16 +978,28 @@ def _process_raw_tokens(statements, context):
 
 
 class _ShaderContext:
+    InputAttribute = collections.namedtuple(
+        "InputAttribute",
+        ["name", "components"]
+    )
+
     def __init__(self, header):
         self.not_processed = []
         self.dyn_indexed_const_buffers = set()
         self.samplers = set()
+        self.input_attributes = dict()
         for line in header:
             tokens = line.split()
             if tokens[0] == "dcl_constantbuffer" and tokens[2] == "dynamicIndexed":
                 self.dyn_indexed_const_buffers.add(tokens[1].split("[")[0])
             elif tokens[0] == "dcl_sampler":
                 self.samplers.add(tokens[1])
+            elif tokens[0] == "dcl_input_ps_siv":
+                name, components = tokens[1].strip(",").split(".")
+                var_name = name
+                if len(tokens) == 3:
+                    var_name = tokens[2]
+                self.input_attributes[name] = self.InputAttribute(var_name, components)
             else:
                 print(f"{line} wasn't processed on primary header parsing")
                 self.not_processed.append(line)

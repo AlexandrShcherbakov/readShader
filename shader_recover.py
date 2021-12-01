@@ -36,6 +36,7 @@ class _AssignStatement:
         "ld_structured_indexable(structured_buffer,stride=16)(mixed,mixed,mixed,mixed)":
             SubstituteParams("{2.name}[{0} + {1}].{2.components}", True),
         "and": SubstituteParams("{} & {}", False),
+        "or": SubstituteParams("{} | {}", False),
         "add": SubstituteParams("{} + {}", False),
         "dp3": SubstituteParams("dot({}, {})", True),
         "dp2": SubstituteParams("dot({}, {})", True),
@@ -54,13 +55,18 @@ class _AssignStatement:
         "sample_l": SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
         "sample_indexable(texture2d)(float,float,float,float)":
             SubstituteParams("{1.name}.Sample({2}, {0}).{1.components}", True),
+        "sample_indexable":
+            SubstituteParams("{1.name}.Sample({2}, {0}).{1.components}", True),
         "mad_sat": SubstituteParams("saturate({} * {} + {})", True),
         "add_sat": SubstituteParams("saturate({} + {})", True),
         "log": SubstituteParams("log({})", True),
         "sample_l(texturecube)(float,float,float,float)":
             SubstituteParams("{1.name}.SampleLevel({2}, {0}, {3}).{1.components}", True),
         "mov_sat": SubstituteParams("saturate({})", True),
-        "length": SubstituteParams("length({})", True)
+        "length": SubstituteParams("length({})", True),
+        "normalize": SubstituteParams("normalize({})", True),
+        "deriv_rty": SubstituteParams("ddy({})", True),
+        "deriv_rtx": SubstituteParams("ddx({})", True),
     }
 
     def __init__(self, raw_tokens: list[str]) -> None:
@@ -314,6 +320,8 @@ class _VariablesContext:
         self.var_names = var_names
         self.samplers = {} # Workaround
         self.input_attributes = {} # Workaround
+        self.dyn_indexed_const_buffers = {} # Workaround
+        self.stat_indexed_const_buffers = {} # Workaround
 
     def add_var(self, usages, register, components, init_pos, mod_pos):
         """Adds variable to context"""
@@ -680,6 +688,41 @@ class _Sampler:
         return self.name
 
 
+class _CBAccessor:
+    def __init__(self, name, components, decorator):
+        self.name = name
+        self.components = components
+        self.type = float
+        self.decorator = decorator
+
+    def set_components_count(self, cnt):
+        self.components = self.components[:cnt]
+
+    def remove_unused_components(self, result_comp):
+        def remove_components(components):
+            if len(result_comp) == len(components):
+                return components
+            return "".join(map(lambda x: components["xyzw".index(x)], result_comp))
+        self.components = remove_components(self.components)
+
+    @staticmethod
+    def try_to_parse(token, pos, operand_id, context):
+        """Returns None if can't parse token with current type. Otherwise creates class instance"""
+
+        decorator = "{}"
+        if token[0] == "-":
+            decorator = "-{}"
+            token = token[1:]
+
+        if "[" not in token or token.split("[")[0] not in context.stat_indexed_const_buffers:
+            return None
+
+        return _CBAccessor(*token.split("."), decorator)
+
+    def __str__(self):
+        return self.name
+
+
 def _substitute_operands(statement, pos, context):
     for operand_id, operand in enumerate(statement.operands):
         types_to_process = (
@@ -690,7 +733,8 @@ def _substitute_operands(statement, pos, context):
             _OutputResource,
             _VariableAccessor,
             _InputAttributeAccessor,
-            _Sampler
+            _Sampler,
+            _CBAccessor
         )
         if isinstance(operand, types_to_process):
             continue
@@ -870,6 +914,7 @@ def _get_types_for_resources(header):
     resource_types = dict()
     type_casters = {
         "dcl_resource_texture2darray": (lambda x: (x[2], float if "float" in x[1] else int)),
+        "dcl_resource_texture2d": (lambda x: (x[2], float if "float" in x[1] else int)),
         "dcl_resource_texture3d": (lambda x: (x[2], float if "float" in x[1] else int)),
         "dcl_input" : (lambda x: (x[1].split(".")[0], int)),
         "dcl_resource_structured": (lambda x: (x[1], None)),
@@ -890,7 +935,7 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
-        if isinstance(operand, (_Constant, _BuiltinConstant, _RegisterAccessor, _InputAttributeAccessor)):
+        if isinstance(operand, (_Constant, _BuiltinConstant, _RegisterAccessor, _InputAttributeAccessor, _CBAccessor)):
             operand.remove_unused_components(result_components)
             return operand
         if "." not in operand:
@@ -962,6 +1007,23 @@ def _substitute_common_functions(blocks):
                         _AssignStatement(["length", statement.result, block.statements[statement_id - 1].operands[0]])
                     ))
                     replace_actions[-1][1].initializer = statement.initializer
+            if statement.instruction == "mul":
+                if (
+                    statement_id > 1
+                    and isinstance(block.statements[statement_id - 1], _AssignStatement)
+                    and block.statements[statement_id - 1].instruction == "rsq"
+                    and statement.operands[0].whole_var_access(block.statements[statement_id - 1].result[0][0])
+                    and isinstance(block.statements[statement_id - 2], _AssignStatement)
+                    and block.statements[statement_id - 2].instruction == "dp3"
+                    and block.statements[statement_id - 2].operands[0] == block.statements[statement_id - 2].operands[1]
+                    and block.statements[statement_id - 1].operands[0].whole_var_access(block.statements[statement_id - 2].result[0][0])
+                    and statement.operands[1] == block.statements[statement_id - 2].operands[0]
+                ):
+                    replace_actions.append((
+                        [statement_id - 2, statement_id],
+                        _AssignStatement(["normalize", statement.result, block.statements[statement_id - 2].operands[0]])
+                    ))
+                    replace_actions[-1][1].initializer = statement.initializer
         for action in reversed(replace_actions):
             follow_actions = block.statements[max(action[0]) + 1:]
             prev_actions = block.statements[:min(action[0])]
@@ -976,7 +1038,8 @@ def _process_raw_tokens_in_statement(statement, context):
             _BuiltinConstant,
             _RegisterAccessor,
             _InputAttributeAccessor,
-            _Sampler
+            _Sampler,
+            _CBAccessor
         ]
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, None, operand_id, context):
@@ -1004,20 +1067,27 @@ class _ShaderContext:
     def __init__(self, header):
         self.not_processed = []
         self.dyn_indexed_const_buffers = set()
+        self.stat_indexed_const_buffers = set()
         self.samplers = set()
         self.input_attributes = dict()
         self.output_attributes = dict()
         for line in header:
             tokens = line.split()
-            if tokens[0] == "dcl_constantbuffer" and tokens[2] == "dynamicIndexed":
-                self.dyn_indexed_const_buffers.add(tokens[1].split("[")[0])
+            if tokens[0] == "dcl_constantbuffer":
+                if tokens[2] == "dynamicIndexed":
+                    self.dyn_indexed_const_buffers.add(tokens[1].split("[")[0])
+                elif tokens[2] == "immediateIndexed":
+                    self.stat_indexed_const_buffers.add(tokens[1].split("[")[0])
             elif tokens[0] == "dcl_sampler":
                 self.samplers.add(tokens[1])
-            elif tokens[0] == "dcl_input_ps_siv":
-                name, components = tokens[1].strip(",").split(".")
+            elif tokens[0] == "dcl_input_ps_siv" or tokens[0] == "dcl_input_ps":
+                v_idx = 1
+                while tokens[v_idx][0] != "v":
+                    v_idx += 1
+                name, components = tokens[v_idx].strip(",").split(".")
                 var_name = name
-                if len(tokens) == 3:
-                    var_name = tokens[2]
+                if len(tokens) - 1 != v_idx:
+                    var_name = tokens[v_idx + 1]
                 self.input_attributes[name] = self.InputAttribute(var_name, components)
             elif tokens[0] == "dcl_output":
                 name, components = tokens[1].split(".")

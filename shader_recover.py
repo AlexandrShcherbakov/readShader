@@ -308,7 +308,9 @@ class _Variable:
 
     def get_var_comp(self, component):
         """Returns variable component by register component"""
-        return "xyzw"[list(sorted(list(self.components), key=lambda x: "xyzw".index(x))).index(component)]
+        return "xyzw"[
+            list(sorted(list(self.components), key=lambda x: "xyzw".index(x))).index(component)
+        ]
 
 
 class _VariablesContext:
@@ -491,7 +493,7 @@ class _RegisterAccessor:
         self.name = name
         self.components = components
         self.decorator = decorator
-    
+
     def remove_unused_components(self, result_comp):
         def remove_components(components):
             if len(result_comp) == len(components):
@@ -513,7 +515,7 @@ class _RegisterAccessor:
         if token[0] == "-":
             decorator = "-{}"
             token = token[1:]
-        
+
         if "." not in token:
             return None
 
@@ -544,7 +546,7 @@ class _InputAttributeAccessor:
         self.components = components
         self.decorator = decorator
         self.type = float
-    
+
     def remove_unused_components(self, result_comp):
         def remove_components(components):
             if len(result_comp) == len(components):
@@ -566,7 +568,7 @@ class _InputAttributeAccessor:
         if token[0] == "-":
             decorator = "-{}"
             token = token[1:]
-        
+
         if "." not in token:
             return None
 
@@ -739,7 +741,9 @@ def _substitute_operands(statement, pos, context):
         if isinstance(operand, types_to_process):
             continue
         if isinstance(operand, _RegisterAccessor):
-            statement.operands[operand_id] = _VariableAccessor.try_to_parse(operand, pos, operand_id, context)
+            statement.operands[operand_id] = _VariableAccessor.try_to_parse(
+                operand, pos, operand_id, context
+            )
             continue
         for token_type in types_to_process:
             if processed := token_type.try_to_parse(operand, pos, operand_id, context):
@@ -763,6 +767,13 @@ def _substitute_result(statement, pos, context):
     statement.result = var_usages
 
 
+def _stores_to_var(statement):
+    return (
+        isinstance(statement, _AssignStatement)
+        and not isinstance(statement.result, _OutputAttributeAccessor)
+    )
+
+
 def _find_usages_in_block(block, register, components, first_statement_id):
     comps_to_process = copy.copy(components)
     usages = dict()
@@ -774,7 +785,7 @@ def _find_usages_in_block(block, register, components, first_statement_id):
                 if statement_id not in usages:
                     usages[statement_id] = dict()
                 usages[statement_id][operand_id] = copy.copy(comps_to_process)
-        if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
+        if not _stores_to_var(statement):
             continue
         target_reg, target_comp = statement.result.split(".")
         if target_reg != register:
@@ -860,7 +871,7 @@ def _compute_result_type(statement, context):
             if isinstance(operand, str):
                 print(operand, "wasn't processed!")
                 continue
-            if tp := type_idx.index(operand.type):
+            if type_idx.index(operand.type):
                 operands_types.append(type_idx.index(operand.type))
             else:
                 print(f"{operand} doesn't have a type!")
@@ -887,14 +898,14 @@ def _replace_registers_with_variables(
     variables_context = _VariablesContext(input_constants, header, variable_names)
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
-            if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
+            if not _stores_to_var(statement):
                 continue
             _add_variable(blocks, graph, variables_context, statement_id, block_id)
 
     for block_id, block in enumerate(blocks):
         for statement_id, statement in enumerate(block.statements):
             _substitute_operands(statement, (block_id, statement_id), variables_context)
-            if not isinstance(statement, _AssignStatement) or isinstance(statement.result, _OutputAttributeAccessor):
+            if not _stores_to_var(statement):
                 continue
             _substitute_result(statement, (block_id, statement_id), variables_context)
             _compute_result_type(statement, variables_context)
@@ -935,7 +946,14 @@ def _get_types_for_resources(header):
 def _remove_extra_components_for_statement(statement):
     result_components = statement.result.split(".")[1]
     def single_operand_reductor(operand):
-        if isinstance(operand, (_Constant, _BuiltinConstant, _RegisterAccessor, _InputAttributeAccessor, _CBAccessor)):
+        types_to_process = (
+            _Constant,
+            _BuiltinConstant,
+            _RegisterAccessor,
+            _InputAttributeAccessor,
+            _CBAccessor,
+        )
+        if isinstance(operand, types_to_process):
             operand.remove_unused_components(result_components)
             return operand
         if "." not in operand:
@@ -1095,7 +1113,6 @@ class _ShaderContext:
             else:
                 print(f"{line} wasn't processed on primary header parsing")
                 self.not_processed.append(line)
-        self.not_processed
 
 
 def _substitute_output_attributes(blocks, context):
